@@ -3,10 +3,9 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ProgressRing } from '@//components/ProgressRing'; 
+import { ProgressRing } from '@/components/ProgressRing'; 
 
 // PASTE YOUR SUPER ADMIN UID HERE
-// This ensures the owner gets redirected to the special admin panel
 const SUPER_ADMIN_UID = "82711e72-9c6a-48b8-ac34-e47f379e4695"; 
 
 export default function Dashboard() {
@@ -49,6 +48,10 @@ export default function Dashboard() {
         setRole(profile.role);
         // Fetch data specific to this role
         await fetchData(profile.role, user.id);
+      } else {
+        // Fallback for user created before trigger update
+        setRole('student'); 
+        await fetchData('student', user.id);
       }
       setLoading(false);
     };
@@ -59,7 +62,6 @@ export default function Dashboard() {
     let classesData: any[] = [];
     
     if (role === 'lecturer') {
-      // Lecturer: Fetch classes they teach
       const { data } = await supabase
         .from('class_instructors')
         .select('class_id, classes(*)')
@@ -71,7 +73,9 @@ export default function Dashboard() {
         .from('class_enrollments')
         .select(`
           class_id, 
-          classes (*, courses ( id, quizzes ( id, quiz_results ( student_id ) ) ) )
+          classes (id, name, description, access_code, 
+            courses ( id, quizzes ( id, quiz_results ( student_id ) ) ) 
+          )
         `)
         .eq('student_id', userId);
       
@@ -163,7 +167,7 @@ export default function Dashboard() {
       name: newClass.name,
       description: newClass.description,
       access_code: accessCode,
-      lecturer_id: user.id
+      lecturer_id: user.id 
     }]).select().single();
 
     if (error) {
@@ -321,13 +325,20 @@ export default function Dashboard() {
                   {/* Code Label (Lecturer) */}
                   {role === 'lecturer' && (
                     <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded text-gray-600 border">
-                      {cls.access_code}
+                      Code: {cls.access_code}
                     </span>
                   )}
                 </div>
                 
                 <h3 className="text-lg font-bold text-gray-900">{cls.name}</h3>
                 <p className="mt-2 text-sm text-gray-500 line-clamp-2">{cls.description || 'No description.'}</p>
+                
+                {/* Show progress text */}
+                {role === 'student' && cls.progress !== undefined && (
+                    <p className="text-xs text-gray-500 mt-2">
+                        {cls.takenQuizzes}/{cls.totalQuizzes} Quizzes Done
+                    </p>
+                )}
                 
                 <div className="mt-4 pt-4 border-t border-gray-100 text-blue-600 text-sm font-bold group-hover:underline">
                   Enter Class →

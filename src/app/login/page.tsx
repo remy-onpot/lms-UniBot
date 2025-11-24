@@ -7,10 +7,12 @@ export default function LoginPage() {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  // Added User Name
   const [fullName, setFullName] = useState('');
-  const [role, setRole] = useState<'student' | 'lecturer'>('student');
+  // Added University State
   const [universityId, setUniversityId] = useState('');
-  const [universities, setUniversities] = useState<any[]>([]);
+  const [universities, setUniversities] = useState<any[]>([]); 
+  const [role, setRole] = useState<'student' | 'lecturer'>('student');
   const [accessCode, setAccessCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -22,17 +24,18 @@ export default function LoginPage() {
   }, []);
 
   const fetchUniversities = async () => {
+    // Only fetch Verified universities (good practice)
     const { data } = await supabase
       .from('universities')
       .select('*')
+      .eq('is_verified', true) // Assuming you added an is_verified column
       .order('name');
     
     if (data) {
       setUniversities(data);
-      // Set default to "Independent Lecturers"
-      const independent = data.find(u => u.subdomain === 'independent');
-      if (independent) {
-        setUniversityId(independent.id);
+      // Set default to a valid university ID or leave blank
+      if (data.length > 0) {
+          setUniversityId(data[0].id); // Set default to the first university
       }
     }
   };
@@ -62,6 +65,7 @@ export default function LoginPage() {
           throw new Error('Please select a university');
         }
 
+        // --- NEW LOGIC: Pass Organization ID ---
         const { error } = await supabase.auth.signUp({
           email,
           password,
@@ -69,7 +73,7 @@ export default function LoginPage() {
             data: {
               role: role,
               full_name: fullName,
-              university_id: universityId
+              org_id: universityId // Pass the selected university ID (Organization ID)
             }
           }
         });
@@ -101,7 +105,7 @@ export default function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* University Selection - Show for both login and signup */}
+          {/* University Selection - Show for signup */}
           {!isLogin && (
             <div>
               <label className="block text-sm font-bold text-gray-700 mb-2">
@@ -117,13 +121,9 @@ export default function LoginPage() {
                 {universities.map((uni) => (
                   <option key={uni.id} value={uni.id}>
                     {uni.name}
-                    {uni.subdomain === 'independent' && ' (For Independent Lecturers)'}
                   </option>
                 ))}
               </select>
-              <p className="text-xs text-gray-500 mt-1">
-                Don't see your university? Choose "Independent Lecturers"
-              </p>
             </div>
           )}
 
@@ -213,9 +213,6 @@ export default function LoginPage() {
                     placeholder="Enter code"
                     required
                   />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Contact admin for access code
-                  </p>
                 </div>
               )}
             </>
@@ -246,12 +243,6 @@ export default function LoginPage() {
           >
             {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
           </button>
-        </div>
-
-        <div className="mt-6 pt-6 border-t border-gray-200 text-center">
-          <a href="/" className="text-sm text-gray-600 hover:text-gray-900">
-            ← Back to Home
-          </a>
         </div>
       </div>
     </div>
