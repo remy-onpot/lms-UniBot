@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 
@@ -7,12 +7,35 @@ export default function LoginPage() {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState(''); // NEW: Full name field
+  const [fullName, setFullName] = useState('');
   const [role, setRole] = useState<'student' | 'lecturer'>('student');
+  const [universityId, setUniversityId] = useState('');
+  const [universities, setUniversities] = useState<any[]>([]);
   const [accessCode, setAccessCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const router = useRouter();
+
+  // Fetch universities on mount
+  useEffect(() => {
+    fetchUniversities();
+  }, []);
+
+  const fetchUniversities = async () => {
+    const { data } = await supabase
+      .from('universities')
+      .select('*')
+      .order('name');
+    
+    if (data) {
+      setUniversities(data);
+      // Set default to "Independent Lecturers"
+      const independent = data.find(u => u.subdomain === 'independent');
+      if (independent) {
+        setUniversityId(independent.id);
+      }
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,12 +44,12 @@ export default function LoginPage() {
 
     try {
       if (isLogin) {
-        // LOGIN LOGIC
+        // LOGIN
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
         router.push('/dashboard');
       } else {
-        // SIGN UP LOGIC
+        // SIGN UP
         if (role === 'lecturer' && accessCode !== 'TEACHER2025') {
           throw new Error('Invalid lecturer access code');
         }
@@ -35,13 +58,18 @@ export default function LoginPage() {
           throw new Error('Please enter your full name');
         }
 
+        if (!universityId) {
+          throw new Error('Please select a university');
+        }
+
         const { error } = await supabase.auth.signUp({
           email,
           password,
           options: {
             data: {
               role: role,
-              full_name: fullName // Pass full name to metadata
+              full_name: fullName,
+              university_id: universityId
             }
           }
         });
@@ -61,14 +89,45 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-blue-50 to-indigo-100 p-4">
       <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">🎓 UniLMS</h1>
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <span className="text-3xl">🎓</span>
+            <h1 className="text-3xl font-bold bg-linear-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+              UniBot
+            </h1>
+          </div>
           <p className="text-gray-600 mt-2">
             {isLogin ? 'Welcome back!' : 'Create your account'}
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* FULL NAME - Only show during registration */}
+          {/* University Selection - Show for both login and signup */}
+          {!isLogin && (
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-2">
+                Select University
+              </label>
+              <select
+                value={universityId}
+                onChange={(e) => setUniversityId(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                required
+              >
+                <option value="">Choose your institution...</option>
+                {universities.map((uni) => (
+                  <option key={uni.id} value={uni.id}>
+                    {uni.name}
+                    {uni.subdomain === 'independent' && ' (For Independent Lecturers)'}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Don't see your university? Choose "Independent Lecturers"
+              </p>
+            </div>
+          )}
+
+          {/* Full Name - Only for signup */}
           {!isLogin && (
             <div>
               <label className="block text-sm font-bold text-gray-700 mb-2">
@@ -109,7 +168,7 @@ export default function LoginPage() {
             />
           </div>
 
-          {/* ROLE SELECTION - Only show during registration */}
+          {/* Role Selection - Only for signup */}
           {!isLogin && (
             <>
               <div>
@@ -140,7 +199,7 @@ export default function LoginPage() {
                 </div>
               </div>
 
-              {/* LECTURER ACCESS CODE */}
+              {/* Lecturer Access Code */}
               {role === 'lecturer' && (
                 <div>
                   <label className="block text-sm font-bold text-gray-700 mb-2">
@@ -187,6 +246,12 @@ export default function LoginPage() {
           >
             {isLogin ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
           </button>
+        </div>
+
+        <div className="mt-6 pt-6 border-t border-gray-200 text-center">
+          <a href="/" className="text-sm text-gray-600 hover:text-gray-900">
+            ← Back to Home
+          </a>
         </div>
       </div>
     </div>
