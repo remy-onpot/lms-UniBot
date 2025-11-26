@@ -3,17 +3,33 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { motion, useScroll, useTransform } from 'framer-motion';
+
+// --- Hero Sparkles / Background Effect ---
+// A simple SVG background pattern for a tech feel
+const GridPattern = () => (
+  <svg className="absolute inset-0 -z-10 h-full w-full stroke-gray-200 mask-[radial-gradient(100%_100%_at_top_right,white,transparent)]" aria-hidden="true">
+    <defs>
+      <pattern id="0787a7c5-978c-4f66-83c7-11c213f99cb7" width={200} height={200} x="50%" y={-1} patternUnits="userSpaceOnUse">
+        <path d="M.5 200V.5H200" fill="none" />
+      </pattern>
+    </defs>
+    <rect width="100%" height="100%" strokeWidth={0} fill="url(#0787a7c5-978c-4f66-83c7-11c213f99cb7)" />
+  </svg>
+);
 
 export default function LandingPage() {
   const router = useRouter();
   const [dbStatus, setDbStatus] = useState<'loading' | 'connected' | 'error'>('loading');
+  const { scrollYProgress } = useScroll();
+  const opacity = useTransform(scrollYProgress, [0, 0.2], [1, 0]);
+  const scale = useTransform(scrollYProgress, [0, 0.2], [1, 0.9]);
 
-  // Check database connection on load
   useEffect(() => {
     async function checkConnection() {
       try {
         const { error } = await supabase.from('users').select('id').limit(1);
-        if (error && error.code !== 'PGRST116') { // PGRST116 = no rows, which is fine
+        if (error && error.code !== 'PGRST116') {
           setDbStatus('error');
         } else {
           setDbStatus('connected');
@@ -26,346 +42,231 @@ export default function LandingPage() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-linear-to-br from-blue-50 via-white to-purple-50">
+    <div className="min-h-screen bg-white text-slate-900 selection:bg-blue-100 overflow-x-hidden">
+      
       {/* Navigation */}
-      <nav className="fixed top-0 w-full bg-white/80 backdrop-blur-md border-b border-gray-200 z-50">
+      <nav className="fixed top-0 w-full bg-white/70 backdrop-blur-xl border-b border-slate-200/50 z-50 transition-all">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-2">
               <span className="text-2xl">🎓</span>
-              <span className="text-2xl font-bold bg-linear-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+              <span className="text-xl font-bold bg-linear-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
                 UniBot
               </span>
-              {/* Status Indicator */}
               {dbStatus === 'connected' && (
-                <span className="ml-2 px-2 py-1 bg-green-100 text-green-700 text-xs font-bold rounded-full">
-                  ● Live
+                <span className="hidden sm:inline-block ml-3 px-2 py-0.5 bg-green-50 text-green-700 text-[10px] uppercase tracking-wider font-bold rounded-full border border-green-200">
+                  System Operational
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-4">
-              <Link href="/ai-assistant" className="text-gray-700 hover:text-gray-900 font-medium">
-                Try AI Assistant
+            <div className="flex items-center gap-6">
+              <Link href="/ai-assistant" className="hidden md:block text-sm font-medium text-slate-600 hover:text-blue-600 transition-colors">
+                AI Assistant
               </Link>
-              <Link href="/login" className="text-gray-700 hover:text-gray-900 font-medium">
-                Login
-              </Link>
-              <Link 
-                href="/login" 
-                className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 transition"
-              >
-                Get Started
-              </Link>
+              <div className="flex items-center gap-3">
+                <Link href="/login" className="text-sm font-medium text-slate-600 hover:text-slate-900">
+                  Log in
+                </Link>
+                <Link 
+                  href="/login" 
+                  className="px-5 py-2 bg-slate-900 text-white rounded-full text-sm font-semibold hover:bg-slate-800 transition shadow-lg hover:shadow-blue-500/20"
+                >
+                  Get Started
+                </Link>
+              </div>
             </div>
           </div>
         </div>
       </nav>
 
       {/* Hero Section */}
-      <section className="pt-32 pb-20 px-4">
-        <div className="max-w-7xl mx-auto text-center">
-          <div className="inline-block mb-4 px-4 py-2 bg-blue-100 text-blue-700 rounded-full text-sm font-bold">
-            🚀 AI-Powered Learning Management System
-          </div>
-          <h1 className="text-5xl md:text-7xl font-bold text-gray-900 mb-6 leading-tight">
-            Transform Education with
-            <br />
-            <span className="bg-linear-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-              AI-Powered LMS
+      <section className="relative pt-32 pb-20 px-4 sm:pt-48 sm:pb-32">
+        <GridPattern />
+        <motion.div 
+          style={{ opacity, scale }}
+          className="max-w-7xl mx-auto text-center relative z-10"
+        >
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="inline-flex items-center gap-2 mb-6 px-4 py-1.5 rounded-full bg-blue-50 border border-blue-100 text-blue-700 text-sm font-medium"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
             </span>
-          </h1>
-          <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto">
-            Automated quiz generation, intelligent tutoring, and seamless course management. 
-            Built specifically for African universities and independent educators.
-          </p>
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            v2.0 is live: Multi-University Support
+          </motion.div>
+
+          <motion.h1 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.1 }}
+            className="text-5xl md:text-7xl font-bold text-slate-900 mb-6 leading-[1.1] tracking-tight"
+          >
+            The Operating System for <br />
+            <span className="bg-linear-to-r from-blue-600 via-purple-600 to-pink-600 bg-clip-text text-transparent">
+              Modern Education
+            </span>
+          </motion.h1>
+
+          <motion.p 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+            className="text-xl text-slate-600 mb-10 max-w-2xl mx-auto leading-relaxed"
+          >
+            Automated grading, AI-powered tutoring, and seamless course management. 
+            Built for forward-thinking universities and independent educators.
+          </motion.p>
+
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.3 }}
+            className="flex flex-col sm:flex-row gap-4 justify-center"
+          >
             <Link
               href="/login"
-              className="px-8 py-4 bg-blue-600 text-white rounded-lg font-bold text-lg hover:bg-blue-700 transition shadow-lg hover:shadow-xl"
+              className="px-8 py-4 bg-blue-600 text-white rounded-xl font-bold text-lg hover:bg-blue-700 transition shadow-xl shadow-blue-500/20 hover:scale-105 active:scale-95"
             >
               Start Free Trial
             </Link>
             <button
-              onClick={() => document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })}
-              className="px-8 py-4 bg-white text-blue-600 rounded-lg font-bold text-lg hover:bg-gray-50 transition border-2 border-blue-600"
+              onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })}
+              className="px-8 py-4 bg-white text-slate-900 rounded-xl font-bold text-lg hover:bg-slate-50 transition border border-slate-200 hover:border-slate-300 shadow-sm"
             >
-              View Pricing
+              Explore Features
             </button>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       </section>
 
-      {/* Features Section */}
-      <section className="py-20 px-4 bg-white">
+      {/* Features Grid - Glassmorphism Style */}
+      <section id="features" className="py-24 px-4 bg-slate-50">
         <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl font-bold text-gray-900 mb-4">Powerful Features</h2>
-            <p className="text-xl text-gray-600">Everything you need to manage courses effectively</p>
+          <div className="text-center mb-20">
+            <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mb-4">Everything you need to scale</h2>
+            <p className="text-lg text-slate-600">Powerful tools wrapped in a simple interface.</p>
           </div>
 
           <div className="grid md:grid-cols-3 gap-8">
-            {/* Feature 1 */}
-            <div className="p-8 rounded-2xl bg-linear-to-br from-blue-50 to-blue-100 hover:shadow-xl transition">
-              <div className="w-14 h-14 bg-blue-600 rounded-xl flex items-center justify-center mb-4">
-                <span className="text-3xl">⚡</span>
-              </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-3">AI Quiz Generation</h3>
-              <p className="text-gray-700">
-                Upload PDFs and generate quizzes instantly. AI creates relevant questions with explanations from your course materials.
-              </p>
-            </div>
-
-            {/* Feature 2 */}
-            <div className="p-8 rounded-2xl bg-linear-to-br from-purple-50 to-purple-100 hover:shadow-xl transition">
-              <div className="w-14 h-14 bg-purple-600 rounded-xl flex items-center justify-center mb-4">
-                <span className="text-3xl">💬</span>
-              </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-3">AI Tutor Chat</h3>
-              <p className="text-gray-700">
-                Students get 24/7 help with an AI tutor trained on your course content. Instant answers to questions about materials.
-              </p>
-            </div>
-
-            {/* Feature 3 */}
-            <div className="p-8 rounded-2xl bg-linear-to-br from-green-50 to-green-100 hover:shadow-xl transition">
-              <div className="w-14 h-14 bg-green-600 rounded-xl flex items-center justify-center mb-4">
-                <span className="text-3xl">📊</span>
-              </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-3">Smart Analytics</h3>
-              <p className="text-gray-700">
-                Track student progress, quiz performance, and engagement. Get insights to improve teaching effectiveness.
-              </p>
-            </div>
-
-            {/* Feature 4 */}
-            <div className="p-8 rounded-2xl bg-linear-to-br from-orange-50 to-orange-100 hover:shadow-xl transition">
-              <div className="w-14 h-14 bg-orange-600 rounded-xl flex items-center justify-center mb-4">
-                <span className="text-3xl">📢</span>
-              </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-3">Announcements</h3>
-              <p className="text-gray-700">
-                Send instant notifications to your class. Students get real-time updates with notification badges.
-              </p>
-            </div>
-
-            {/* Feature 5 */}
-            <div className="p-8 rounded-2xl bg-linear-to-br from-pink-50 to-pink-100 hover:shadow-xl transition">
-              <div className="w-14 h-14 bg-pink-600 rounded-xl flex items-center justify-center mb-4">
-                <span className="text-3xl">📅</span>
-              </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-3">Weekly Topics</h3>
-              <p className="text-gray-700">
-                Organize course content by weeks. Students always know what to study and when quizzes are due.
-              </p>
-            </div>
-
-            {/* Feature 6 */}
-            <div className="p-8 rounded-2xl bg-linear-to-br from-indigo-50 to-indigo-100 hover:shadow-xl transition">
-              <div className="w-14 h-14 bg-indigo-600 rounded-xl flex items-center justify-center mb-4">
-                <span className="text-3xl">🏫</span>
-              </div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-3">Multi-University</h3>
-              <p className="text-gray-700">
-                Perfect for institutions or independent lecturers. Each university gets their own secure workspace.
-              </p>
-            </div>
+            {[
+              { title: "AI Quiz Gen", icon: "⚡", desc: "Turn PDFs into quizzes instantly.", color: "blue" },
+              { title: "24/7 AI Tutor", icon: "🤖", desc: "Personalized help for every student.", color: "purple" },
+              { title: "Smart Analytics", icon: "📊", desc: "Track performance in real-time.", color: "green" },
+              { title: "Instant Alerts", icon: "🔔", desc: "Push notifications for updates.", color: "orange" },
+              { title: "Weekly Planner", icon: "📅", desc: "Auto-organized course schedules.", color: "pink" },
+              { title: "Multi-Tenant", icon: "🏢", desc: "Separate spaces for universities.", color: "indigo" }
+            ].map((feature, i) => (
+              <motion.div
+                key={i}
+                whileHover={{ y: -5 }}
+                className="group p-8 rounded-3xl bg-white border border-slate-100 shadow-sm hover:shadow-xl transition-all duration-300 relative overflow-hidden"
+              >
+                <div className={`absolute top-0 right-0 w-32 h-32 bg-${feature.color}-50 rounded-full blur-3xl opacity-0 group-hover:opacity-100 transition-opacity -mr-16 -mt-16`} />
+                
+                <div className={`w-14 h-14 rounded-2xl bg-${feature.color}-50 flex items-center justify-center mb-6 text-3xl shadow-inner`}>
+                  {feature.icon}
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-3">{feature.title}</h3>
+                <p className="text-slate-600 leading-relaxed relative z-10">
+                  {feature.desc}
+                </p>
+              </motion.div>
+            ))}
           </div>
         </div>
       </section>
 
       {/* Pricing Section */}
-      <section id="pricing" className="py-20 px-4">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl font-bold text-gray-900 mb-4">Simple, Transparent Pricing</h2>
-            <p className="text-xl text-gray-600">Choose the plan that fits your needs</p>
+      <section className="py-24 px-4 bg-white relative overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,var(--tw-gradient-stops))] from-blue-50 via-white to-white opacity-50"></div>
+        
+        <div className="max-w-7xl mx-auto relative z-10">
+          <div className="text-center mb-20">
+            <h2 className="text-4xl font-bold text-slate-900 mb-4">Simple, Transparent Pricing</h2>
+            <p className="text-xl text-slate-600">Start for free, upgrade as you grow.</p>
           </div>
 
           <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
-            {/* Free Tier */}
-            <div className="p-8 rounded-2xl bg-white border-2 border-gray-200 hover:border-blue-500 hover:shadow-xl transition">
-              <h3 className="text-2xl font-bold text-gray-900 mb-2">Free</h3>
-              <p className="text-gray-600 mb-6">For individual lecturers getting started</p>
-              <div className="mb-6">
-                <span className="text-5xl font-bold text-gray-900">$0</span>
-                <span className="text-gray-600">/month</span>
+            {/* Free Plan */}
+            <div className="p-8 rounded-3xl border border-slate-200 bg-white hover:border-blue-200 transition-colors">
+              <h3 className="text-lg font-bold text-slate-900 mb-2">Free</h3>
+              <p className="text-slate-500 mb-6 text-sm">For solo lecturers</p>
+              <div className="mb-8">
+                <span className="text-4xl font-bold text-slate-900">$0</span>
+                <span className="text-slate-500">/mo</span>
               </div>
-              <ul className="space-y-3 mb-8">
-                <li className="flex items-center gap-2">
-                  <span className="text-green-600">✓</span>
-                  <span className="text-gray-700">1 course</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-green-600">✓</span>
-                  <span className="text-gray-700">Up to 50 students</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-green-600">✓</span>
-                  <span className="text-gray-700">AI quiz generation</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-green-600">✓</span>
-                  <span className="text-gray-700">AI tutor chat</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-green-600">✓</span>
-                  <span className="text-gray-700">Basic analytics</span>
-                </li>
+              <ul className="space-y-4 mb-8 text-sm text-slate-600">
+                <li className="flex gap-3">✓ 1 Active Course</li>
+                <li className="flex gap-3">✓ 50 Student Limit</li>
+                <li className="flex gap-3">✓ Basic AI Quiz Gen</li>
               </ul>
-              <Link
-                href="/login"
-                className="block w-full py-3 bg-gray-100 text-gray-900 rounded-lg font-bold text-center hover:bg-gray-200 transition"
-              >
-                Get Started Free
+              <Link href="/login" className="block w-full py-3 rounded-xl bg-slate-100 text-slate-900 font-bold text-center hover:bg-slate-200 transition">
+                Get Started
               </Link>
             </div>
 
-            {/* Pro Tier */}
-            <div className="p-8 rounded-2xl bg-linear-to-br from-blue-600 to-purple-600 text-white relative hover:shadow-2xl transition transform hover:scale-105">
-              <div className="absolute top-4 right-4 px-3 py-1 bg-white text-blue-600 rounded-full text-xs font-bold">
+            {/* Pro Plan */}
+            <div className="relative p-8 rounded-3xl bg-slate-900 text-white shadow-2xl transform md:-translate-y-4 border border-slate-800">
+              <div className="absolute top-0 right-0 bg-linear-to-r from-blue-600 to-purple-600 text-white text-xs font-bold px-3 py-1 rounded-bl-xl rounded-tr-xl">
                 POPULAR
               </div>
-              <h3 className="text-2xl font-bold mb-2">Pro</h3>
-              <p className="text-blue-100 mb-6">For serious educators</p>
-              <div className="mb-6">
-                <span className="text-5xl font-bold">$15</span>
-                <span className="text-blue-100">/month</span>
+              <h3 className="text-lg font-bold mb-2">Pro</h3>
+              <p className="text-slate-400 mb-6 text-sm">For serious educators</p>
+              <div className="mb-8">
+                <span className="text-4xl font-bold">$15</span>
+                <span className="text-slate-400">/mo</span>
               </div>
-              <ul className="space-y-3 mb-8">
-                <li className="flex items-center gap-2">
-                  <span>✓</span>
-                  <span>Unlimited courses</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span>✓</span>
-                  <span>Unlimited students</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span>✓</span>
-                  <span>All Free features</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span>✓</span>
-                  <span>Advanced analytics</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span>✓</span>
-                  <span>Priority support</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span>✓</span>
-                  <span>Remove UniBot branding</span>
-                </li>
+              <ul className="space-y-4 mb-8 text-sm text-slate-300">
+                <li className="flex gap-3 text-white">✓ Unlimited Courses</li>
+                <li className="flex gap-3 text-white">✓ Unlimited Students</li>
+                <li className="flex gap-3 text-white">✓ Advanced Analytics</li>
+                <li className="flex gap-3 text-white">✓ Priority Support</li>
               </ul>
-              <Link
-                href="/login"
-                className="block w-full py-3 bg-white text-blue-600 rounded-lg font-bold text-center hover:bg-blue-50 transition"
-              >
-                Start Pro Trial
+              <Link href="/login" className="block w-full py-3 rounded-xl bg-blue-600 text-white font-bold text-center hover:bg-blue-700 transition shadow-lg shadow-blue-900/50">
+                Start 14-Day Trial
               </Link>
             </div>
 
-            {/* Enterprise Tier */}
-            <div className="p-8 rounded-2xl bg-white border-2 border-gray-200 hover:border-purple-500 hover:shadow-xl transition">
-              <h3 className="text-2xl font-bold text-gray-900 mb-2">Enterprise</h3>
-              <p className="text-gray-600 mb-6">For universities and institutions</p>
-              <div className="mb-6">
-                <span className="text-5xl font-bold text-gray-900">Custom</span>
+            {/* Enterprise Plan */}
+            <div className="p-8 rounded-3xl border border-slate-200 bg-white hover:border-blue-200 transition-colors">
+              <h3 className="text-lg font-bold text-slate-900 mb-2">University</h3>
+              <p className="text-slate-500 mb-6 text-sm">For full institutions</p>
+              <div className="mb-8">
+                <span className="text-4xl font-bold text-slate-900">Custom</span>
               </div>
-              <ul className="space-y-3 mb-8">
-                <li className="flex items-center gap-2">
-                  <span className="text-green-600">✓</span>
-                  <span className="text-gray-700">Everything in Pro</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-green-600">✓</span>
-                  <span className="text-gray-700">Custom subdomain</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-green-600">✓</span>
-                  <span className="text-gray-700">University branding</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-green-600">✓</span>
-                  <span className="text-gray-700">SSO integration</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-green-600">✓</span>
-                  <span className="text-gray-700">Dedicated support</span>
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="text-green-600">✓</span>
-                  <span className="text-gray-700">SLA guarantee</span>
-                </li>
+              <ul className="space-y-4 mb-8 text-sm text-slate-600">
+                <li className="flex gap-3">✓ Custom Domain</li>
+                <li className="flex gap-3">✓ SSO Integration</li>
+                <li className="flex gap-3">✓ White-label Branding</li>
+                <li className="flex gap-3">✓ Dedicated Success Manager</li>
               </ul>
-              <Link
-                href="/contact"
-                className="block w-full py-3 bg-purple-600 text-white rounded-lg font-bold text-center hover:bg-purple-700 transition"
-              >
+              <button className="block w-full py-3 rounded-xl border border-slate-200 text-slate-900 font-bold text-center hover:bg-slate-50 transition">
                 Contact Sales
-              </Link>
+              </button>
             </div>
           </div>
-        </div>
-      </section>
-
-      {/* CTA Section */}
-      <section className="py-20 px-4 bg-linear-to-br from-blue-600 to-purple-600">
-        <div className="max-w-4xl mx-auto text-center text-white">
-          <h2 className="text-4xl md:text-5xl font-bold mb-6">
-            Ready to Transform Your Teaching?
-          </h2>
-          <p className="text-xl mb-8 text-blue-100">
-            Join hundreds of educators using UniBot to deliver better learning experiences
-          </p>
-          <Link
-            href="/login"
-            className="inline-block px-8 py-4 bg-white text-blue-600 rounded-lg font-bold text-lg hover:bg-blue-50 transition shadow-xl"
-          >
-            Get Started Free - No Credit Card Required
-          </Link>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="py-12 px-4 bg-gray-900 text-gray-400">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid md:grid-cols-4 gap-8 mb-8">
-            <div>
-              <div className="flex items-center gap-2 mb-4">
-                <span className="text-2xl">🎓</span>
-                <span className="text-xl font-bold text-white">UniBot</span>
-              </div>
-              <p className="text-sm">
-                AI-powered learning management system for African universities and educators.
-              </p>
+      <footer className="bg-slate-50 border-t border-slate-200 pt-16 pb-8">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="flex flex-col md:flex-row justify-between items-center gap-8">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">🎓</span>
+              <span className="font-bold text-slate-900">UniBot</span>
             </div>
-            <div>
-              <h4 className="font-bold text-white mb-4">Product</h4>
-              <ul className="space-y-2 text-sm">
-                <li><a href="#" className="hover:text-white">Features</a></li>
-                <li><a href="#pricing" className="hover:text-white">Pricing</a></li>
-                <li><a href="#" className="hover:text-white">Updates</a></li>
-              </ul>
+            <div className="flex gap-8 text-sm text-slate-600">
+              <a href="#" className="hover:text-blue-600 transition">Features</a>
+              <a href="#" className="hover:text-blue-600 transition">Pricing</a>
+              <a href="#" className="hover:text-blue-600 transition">Twitter</a>
+              <a href="#" className="hover:text-blue-600 transition">GitHub</a>
             </div>
-            <div>
-              <h4 className="font-bold text-white mb-4">Company</h4>
-              <ul className="space-y-2 text-sm">
-                <li><a href="#" className="hover:text-white">About</a></li>
-                <li><a href="#" className="hover:text-white">Blog</a></li>
-                <li><a href="/contact" className="hover:text-white">Contact</a></li>
-              </ul>
-            </div>
-            <div>
-              <h4 className="font-bold text-white mb-4">Legal</h4>
-              <ul className="space-y-2 text-sm">
-                <li><a href="#" className="hover:text-white">Privacy</a></li>
-                <li><a href="#" className="hover:text-white">Terms</a></li>
-              </ul>
-            </div>
-          </div>
-          <div className="pt-8 border-t border-gray-800 text-center text-sm">
-            <p>© 2024 UniBot. All rights reserved.</p>
+            <p className="text-xs text-slate-500">© 2025 UniBot Inc.</p>
           </div>
         </div>
       </footer>
