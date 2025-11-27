@@ -12,12 +12,18 @@ export default function EnhancedCoursePage() {
   // --- DATA STATE ---
   const [course, setCourse] = useState<any>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [isCourseRep, setIsCourseRep] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [mainHandout, setMainHandout] = useState<any>(null);
   const [supplementaryMaterials, setSupplementaryMaterials] = useState<any[]>([]);
   const [topics, setTopics] = useState<any[]>([]);
   const [assignments, setAssignments] = useState<any[]>([]);
   const [announcements, setAnnouncements] = useState<any[]>([]);
+  
+  // --- ACCESS STATE ---
+  const [hasAccess, setHasAccess] = useState(false);
+  const [showPaywall, setShowPaywall] = useState(false);
+  const [isPaywalledCourse, setIsPaywalledCourse] = useState(false);
   
   // --- UI STATE ---
   const [loading, setLoading] = useState(true);
@@ -52,10 +58,16 @@ export default function EnhancedCoursePage() {
     if (!user) return router.push('/login');
     setUserId(user.id);
 
-    const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).single();
+    const { data: profile } = await supabase.from('users').select('role, is_course_rep').eq('id', user.id).single();
     setRole(profile?.role);
+    setIsCourseRep(profile?.is_course_rep || false);
 
-    const { data: courseData, error } = await supabase.from('courses').select('*, classes(*)').eq('id', courseId).single();
+    // Fetch Course Data
+    const { data: courseData, error } = await supabase
+        .from('courses')
+        .select(`*, classes ( id, lecturer_id, users:lecturer_id ( plan_tier ) )`)
+        .eq('id', courseId)
+        .single();
     
     if (error) {
       setErrorMsg("Course not found.");
@@ -63,6 +75,36 @@ export default function EnhancedCoursePage() {
       return;
     }
     setCourse(courseData);
+
+    // --- PAYWALL LOGIC ---
+    // Check if current user is the owner (Lecturer or Rep who created it)
+    const isOwner = courseData.classes?.lecturer_id === user.id;
+    
+    // Paywall logic applies ONLY to students who are NOT the owner
+    if (profile?.role === 'student' && !isOwner) {
+        const ownerPlan = courseData.classes?.users?.plan_tier;
+        
+        // If owner is a Rep (cohort_manager), enable paywall logic for regular students
+        if (ownerPlan === 'cohort_manager') {
+            setIsPaywalledCourse(true); 
+            
+            // Check if student has paid for this course
+            const { data: access } = await supabase
+                .from('student_course_access')
+                .select('id')
+                .eq('student_id', user.id)
+                .eq('course_id', courseId)
+                .maybeSingle();
+            
+            setHasAccess(!!access);
+        } else {
+            // If owner is a Lecturer (on starter/pro/elite), content is free for students
+            setHasAccess(true); 
+        }
+    } else {
+        // Lecturers, TAs, and Course Rep Owners always have access
+        setHasAccess(true); 
+    }
 
     // Fetch Content
     const { data: handout } = await supabase.from('materials').select('*').eq('course_id', courseId).eq('is_main_handout', true).maybeSingle();
@@ -74,11 +116,9 @@ export default function EnhancedCoursePage() {
     const { data: topicsData } = await supabase.from('course_topics').select('*, quizzes(id)').eq('course_id', courseId).order('week_number');
     setTopics(topicsData || []);
 
-    // Fetch Assignments
     const { data: assigns } = await supabase.from('assignments').select('*').eq('course_id', courseId).order('due_date');
     
-    // If Student, verify if they submitted
-    if (profile?.role === 'student') {
+    if (profile?.role === 'student' && !isOwner) {
       const { data: subs } = await supabase.from('assignment_submissions').select('*').eq('student_id', user.id);
       const mergedAssigns = assigns?.map(a => {
         const sub = subs?.find(s => s.assignment_id === a.id);
@@ -98,21 +138,28 @@ export default function EnhancedCoursePage() {
   };
 
   // 🔒 PERMISSIONS
-  const isLecturer = role === 'lecturer';
-  const isAdmin = role === 'university_admin' || role === 'super_admin';
-  const canEdit = isLecturer; 
-  const canViewAnalysis = isLecturer || isAdmin; 
+  const isOwner = course?.classes?.lecturer_id === userId;
+  // Can edit if you are a Lecturer OR if you are the Student Rep who owns this class
+  const canEdit = role === 'lecturer' || (role === 'student' && isCourseRep && isOwner);
+  
+  // Note: Course Reps can invite lecturers, but typically don't upload content themselves
+  // However, we allow it here so they can set up the initial structure if needed.
+  // You can restrict `canEdit` further if you want Reps to be "Read Only" regarding content.
+  
+  const canViewAnalysis = canEdit; 
 
   // --- HELPER: EXTRACT TEXT ---
   const extractTextFromPDF = async (file: File) => {
     try {
       const pdfjsLib = await import('pdfjs-dist');
-      // ✅ FIXED: Uses reliable v4 worker from unpkg to prevent version mismatch
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@4.8.69/build/pdf.worker.min.mjs`;
+      // ✅ FIX: Use the version matching your package.json (5.4.394)
+      // Using unpkg to fetch the worker file directly
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@5.4.394/build/pdf.worker.min.mjs`;
 
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       let fullText = "";
+      // Limit to first 15 pages to save tokens/processing
       const maxPages = Math.min(pdf.numPages, 15); 
       for (let i = 1; i <= maxPages; i++) {
         const page = await pdf.getPage(i);
@@ -122,10 +169,33 @@ export default function EnhancedCoursePage() {
         fullText += `\n${pageText}`;
       }
       return fullText;
-    } catch (e) { return ""; }
+    } catch (e) { 
+        console.error("PDF Extraction Error:", e);
+        return ""; 
+    }
   };
 
-  // --- ACTION HANDLERS ---
+  // --- PAYMENT HANDLER (Placeholder) ---
+  const handlePayment = async (amount: number, type: 'single' | 'bundle') => {
+      // PAYMENT SIMULATION
+      if(confirm(`Simulate Payment of ₵${amount}?`)) {
+          const { error } = await supabase.from('student_course_access').insert({
+              student_id: userId,
+              course_id: courseId,
+              access_type: type === 'bundle' ? 'full_semester' : 'trial'
+          });
+          
+          if (error) {
+              alert("Error processing access: " + error.message);
+          } else {
+              alert("Payment Successful! Content Unlocked.");
+              setHasAccess(true);
+              setShowPaywall(false);
+          }
+      }
+  };
+
+  // --- ACTION HANDLERS (View/Edit) ---
 
   const handleViewSubmissions = async (assignId: string, title: string) => {
     setLoading(true);
@@ -175,13 +245,12 @@ export default function EnhancedCoursePage() {
     else {
       alert("Grade Updated!");
       setShowModal('submissions');
-      // Refresh list
       const { data: subs } = await supabase.from('assignment_submissions').select('*, users(full_name, email)').eq('assignment_id', selectedSubmission.assignment_id).order('submitted_at', { ascending: false });
       setSubmissionsList(subs || []);
     }
   };
 
-  // --- UPLOAD HANDLERS (With Sanitization) ---
+  // --- UPLOAD HANDLERS ---
 
   const handleUploadMainHandout = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files?.[0]) return;
@@ -190,7 +259,14 @@ export default function EnhancedCoursePage() {
     
     try {
       const extractedText = await extractTextFromPDF(file);
-      // ✅ FIXED: Clean filename to prevent 400 Error
+      
+      // DEBUG: Check if text was extracted
+      if (!extractedText || extractedText.length < 50) {
+          console.warn("Warning: Low text extraction. PDF might be scanned.");
+      } else {
+          console.log("✅ Text extracted successfully:", extractedText.length, "chars");
+      }
+
       const cleanName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
       const filePath = `${courseId}/handout_${Date.now()}_${cleanName}`;
       
@@ -226,7 +302,8 @@ export default function EnhancedCoursePage() {
     } catch (error: any) { alert('Error: ' + error.message); } finally { setUploading(false); }
   };
 
-  // --- ASSIGNMENT SUBMISSION (With Sanitization) ---
+  // --- SUBMISSION & QUIZ HANDLERS ---
+
   const handleAssignmentSubmission = async (e: React.ChangeEvent<HTMLInputElement>, assignId: string, title: string, desc: string, maxPoints: number) => {
     if (!e.target.files?.[0]) return;
     const file = e.target.files[0];
@@ -250,7 +327,19 @@ export default function EnhancedCoursePage() {
         return;
       }
 
-      // ✅ FIXED: Clean filename
+      let text = "";
+      if (file.type === 'application/pdf') {
+        text = await extractTextFromPDF(file);
+        if (!text || text.trim().length < 20) {
+            console.warn("⚠️ Warning: Extracted text is empty or too short.");
+        } else {
+            console.log(`✅ Extracted ${text.length} characters for grading.`);
+        }
+      } else {
+        text = "Non-PDF submission."; 
+        alert("⚠️ Warning: AI Grading only works with readable PDFs.");
+      }
+
       const cleanName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
       const path = `${courseId}/assignments/${Date.now()}_${cleanName}`;
       
@@ -259,13 +348,10 @@ export default function EnhancedCoursePage() {
 
       const { data: { publicUrl } } = supabase.storage.from('course-content').getPublicUrl(path);
 
-      let text = "";
-      if (file.type === 'application/pdf') text = await extractTextFromPDF(file);
-      else text = "Non-PDF submission.";
-
       let aiResult = { score: 0, feedback: "Pending", is_ai_generated: false, breakdown: {} };
       
       if (text.length > 50) {
+         console.log("🚀 Sending text to Grading API...");
          const res = await fetch('/api/grade-assignment', { 
            method: 'POST', 
            body: JSON.stringify({ 
@@ -275,19 +361,40 @@ export default function EnhancedCoursePage() {
              maxPoints: maxPoints
            }) 
          });
-         if (res.ok) aiResult = await res.json();
+         
+         if (res.ok) {
+             aiResult = await res.json();
+             console.log("✅ AI Grading Result:", aiResult);
+         } else {
+             console.error("❌ AI Grading API Failed:", res.status);
+         }
+      } else {
+          aiResult.feedback = "Could not read document text (Scanned PDF or Non-PDF). Waiting for lecturer review.";
       }
 
       await supabase.from('assignment_submissions').upsert({
-        assignment_id: assignId, student_id: user.id, file_url: publicUrl, content_text: text, ai_grade: aiResult.score, ai_feedback: aiResult.feedback, ai_is_detected: aiResult.is_ai_generated, ai_breakdown: aiResult.breakdown, attempt_count: attempts + 1
+        assignment_id: assignId, 
+        student_id: user.id, 
+        file_url: publicUrl, 
+        content_text: text, 
+        ai_grade: aiResult.score, 
+        ai_feedback: aiResult.feedback, 
+        ai_is_detected: aiResult.is_ai_generated, 
+        ai_breakdown: aiResult.breakdown, 
+        attempt_count: attempts + 1
       }, { onConflict: 'assignment_id, student_id' });
 
       alert(`Submitted! AI Grade: ${aiResult.score}/${maxPoints}`);
       fetchCourseData();
-    } catch (error: any) { alert(error.message); } finally { setUploading(false); }
+      
+    } catch (error: any) { 
+        console.error("Submission Error:", error);
+        alert('Error: ' + error.message); 
+    } finally { 
+        setUploading(false); 
+    }
   };
 
-  // --- CREATION HANDLERS ---
   const handleCreateAssignment = async (e: React.FormEvent) => {
     e.preventDefault();
     setProcessing(true);
@@ -370,11 +477,20 @@ export default function EnhancedCoursePage() {
           <div>
             <h1 className="text-3xl font-bold text-gray-900">{course?.title}</h1>
             <p className="text-gray-600 mt-1">{course?.classes?.name}</p>
+            {isPaywalledCourse && !hasAccess && (
+                <span className="bg-red-100 text-red-700 text-xs font-bold px-2 py-1 rounded mt-2 inline-block">🔒 Locked (Preview)</span>
+            )}
           </div>
           {canEdit && (
             <div className="flex gap-2">
-              <button onClick={() => setShowModal('topic')} className="px-4 py-2 bg-blue-600 text-white rounded font-bold text-sm">+ Add Week</button>
-              <button onClick={() => setShowModal('announce')} className="px-4 py-2 bg-green-600 text-white rounded font-bold text-sm">Announce</button>
+              {isCourseRep ? (
+                  <button onClick={() => alert("Invite Link: [Copied]")} className="px-4 py-2 bg-purple-600 text-white rounded font-bold text-sm">Invite Lecturer</button>
+              ) : (
+                  <>
+                    <button onClick={() => setShowModal('topic')} className="px-4 py-2 bg-blue-600 text-white rounded font-bold text-sm">+ Add Week</button>
+                    <button onClick={() => setShowModal('announce')} className="px-4 py-2 bg-green-600 text-white rounded font-bold text-sm">Announce</button>
+                  </>
+              )}
             </div>
           )}
         </div>
@@ -400,44 +516,77 @@ export default function EnhancedCoursePage() {
                         <Link href={`/dashboard/chat/${mainHandout.id}`} className="px-3 py-1 bg-purple-100 text-purple-700 text-xs font-bold rounded hover:bg-purple-200">💬 AI Tutor</Link>
                       </div>
                     </div>
-                  ) : canEdit ? (
-                    <input type="file" accept=".pdf" onChange={handleUploadMainHandout} disabled={uploading} className="block w-full text-sm text-gray-900 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
-                  ) : <p className="text-gray-500 italic">No handout yet.</p>}
+                  ) : (
+                    canEdit ? (
+                      !isCourseRep ? (
+                        <input type="file" accept=".pdf" onChange={handleUploadMainHandout} disabled={uploading} className="block w-full text-sm text-gray-900 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+                      ) : <p className="text-gray-500 italic text-sm">Invite a lecturer to upload content.</p>
+                    ) : <p className="text-gray-500 italic">No handout yet.</p>
+                  )}
                 </div>
 
-                {/* TOPICS */}
+                {/* TOPICS (Weeks) */}
                 <div className="space-y-4">
-                  {topics.map(topic => (
-                    <div key={topic.id} className="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h3 className="font-bold text-lg text-gray-900">Week {topic.week_number}: {topic.title}</h3>
-                          <p className="text-gray-600 text-sm mt-1">{topic.description}</p>
-                          <p className="text-xs text-gray-400 mt-1">Pages {topic.start_page}-{topic.end_page}</p>
-                        </div>
-                        {mainHandout && (
-                          <Link href={`/dashboard/chat/${mainHandout.id}?pages=${topic.start_page}-${topic.end_page}`} className="px-3 py-1 bg-purple-50 text-purple-600 text-xs font-bold rounded h-fit border border-purple-100">Ask AI</Link>
-                        )}
-                      </div>
-                      <div className="mt-4 flex gap-2 items-center">
-                        {topic.quizzes?.[0] ? (
-                          <>
-                            <Link href={canViewAnalysis ? `/dashboard/quiz/${topic.quizzes[0].id}/gradebook` : `/dashboard/quiz/${topic.quizzes[0].id}`} className="px-3 py-1 bg-green-100 text-green-700 text-xs font-bold rounded hover:bg-green-200">
-                              {canViewAnalysis ? '✅ View & Grade' : '📝 Take Quiz'}
-                            </Link>
-                            {canEdit && (
-                              <button onClick={() => handleDeleteQuiz(topic.quizzes[0].id)} className="text-xs text-red-500 hover:underline">Delete Quiz</button>
+                  {topics.map(topic => {
+                    // LOCK LOGIC: Week 1 is free. Week 2+ requires payment if paywalled.
+                    const isLocked = isPaywalledCourse && !hasAccess && topic.week_number > 1;
+
+                    return (
+                        <div key={topic.id} className={`bg-white p-5 rounded-xl shadow-sm border ${isLocked ? 'border-red-100 opacity-80' : 'border-gray-100'}`}>
+                        <div className="flex justify-between items-start">
+                            <div>
+                            <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2">
+                                Week {topic.week_number}: {topic.title}
+                                {isLocked && <span className="text-[10px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-extrabold tracking-wide uppercase border border-red-200">Locked</span>}
+                            </h3>
+                            <p className="text-gray-600 text-sm mt-1">{topic.description}</p>
+                            <p className="text-xs text-gray-400 mt-1">Pages {topic.start_page}-{topic.end_page}</p>
+                            </div>
+                            
+                            {mainHandout && (
+                                isLocked ? (
+                                    <button disabled className="px-3 py-1 bg-gray-100 text-gray-400 text-xs font-bold rounded border border-gray-200 cursor-not-allowed">
+                                        Ask AI 🔒
+                                    </button>
+                                ) : (
+                                    <Link href={`/dashboard/chat/${mainHandout.id}?pages=${topic.start_page}-${topic.end_page}`} className="px-3 py-1 bg-purple-50 text-purple-600 text-xs font-bold rounded h-fit border border-purple-100 hover:bg-purple-100 transition">
+                                        Ask AI
+                                    </Link>
+                                )
                             )}
-                          </>
-                        ) : canEdit ? (
-                          <>
-                            <button onClick={() => { setSelectedItem(topic); setShowModal('quiz'); }} className="px-3 py-1 bg-orange-50 text-orange-600 text-xs font-bold rounded hover:bg-orange-100 border border-orange-200">✨ AI Quiz</button>
-                            <button onClick={() => { setSelectedItem(topic); setShowModal('manual'); }} className="px-3 py-1 bg-gray-100 text-gray-600 text-xs font-bold rounded hover:bg-gray-100 border border-gray-200">📝 Manual Quiz</button>
-                          </>
-                        ) : <span className="text-xs text-gray-400">No quiz.</span>}
-                      </div>
-                    </div>
-                  ))}
+                        </div>
+
+                        <div className="mt-4 flex gap-2 items-center">
+                            {isLocked ? (
+                                <button 
+                                    onClick={() => setShowPaywall(true)} 
+                                    className="w-full py-2 bg-linear-to-r from-red-500 to-orange-500 text-white text-xs font-bold rounded shadow-lg hover:shadow-xl transition transform hover:-translate-y-0.5 flex justify-center items-center gap-2"
+                                >
+                                    <span>🔓 Unlock Week {topic.week_number} & More</span>
+                                </button>
+                            ) : (
+                                <>
+                                    {topic.quizzes?.[0] ? (
+                                    <>
+                                        <Link href={canViewAnalysis ? `/dashboard/quiz/${topic.quizzes[0].id}/gradebook` : `/dashboard/quiz/${topic.quizzes[0].id}`} className="px-3 py-1 bg-green-100 text-green-700 text-xs font-bold rounded hover:bg-green-200">
+                                        {canViewAnalysis ? '✅ View & Grade' : '📝 Take Quiz'}
+                                        </Link>
+                                        {canEdit && !isCourseRep && (
+                                        <button onClick={() => handleDeleteQuiz(topic.quizzes[0].id)} className="text-xs text-red-500 hover:underline">Delete Quiz</button>
+                                        )}
+                                    </>
+                                    ) : canEdit && !isCourseRep ? (
+                                    <>
+                                        <button onClick={() => { setSelectedItem(topic); setShowModal('quiz'); }} className="px-3 py-1 bg-orange-50 text-orange-600 text-xs font-bold rounded hover:bg-orange-100 border border-orange-200">✨ AI Quiz</button>
+                                        <button onClick={() => { setSelectedItem(topic); setShowModal('manual'); }} className="px-3 py-1 bg-gray-100 text-gray-600 text-xs font-bold rounded hover:bg-gray-100 border border-gray-200">📝 Manual Quiz</button>
+                                    </>
+                                    ) : <span className="text-xs text-gray-400">No quiz available.</span>}
+                                </>
+                            )}
+                        </div>
+                        </div>
+                    );
+                  })}
                 </div>
               </>
             ) : (
@@ -445,7 +594,7 @@ export default function EnhancedCoursePage() {
               <div className="space-y-4">
                 <div className="flex justify-between items-center">
                   <h2 className="text-xl font-bold text-gray-900">Assignments</h2>
-                  {canEdit && <button onClick={() => setShowModal('assignment')} className="px-3 py-1 bg-blue-600 text-white text-sm rounded font-bold">+ Create</button>}
+                  {canEdit && !isCourseRep && <button onClick={() => setShowModal('assignment')} className="px-3 py-1 bg-blue-600 text-white text-sm rounded font-bold">+ Create</button>}
                 </div>
                 {assignments.map(assign => {
                   const isLate = new Date() > new Date(assign.due_date);
@@ -463,10 +612,9 @@ export default function EnhancedCoursePage() {
                           </div>
                         </div>
                         
-                        {canEdit && <button onClick={() => handleDeleteAssignment(assign.id)} className="text-xs text-red-400 hover:text-red-600">Delete</button>}
+                        {canEdit && !isCourseRep && <button onClick={() => handleDeleteAssignment(assign.id)} className="text-xs text-red-400 hover:text-red-600">Delete</button>}
                       </div>
 
-                      {/* Student View */}
                       {!canEdit && (
                         <div className="mt-4 pt-4 border-t border-gray-100">
                           {assign.mySubmission ? (
@@ -484,7 +632,7 @@ export default function EnhancedCoursePage() {
                                 ) : (
                                    <>
                                      <p className="text-sm font-bold text-gray-700 mb-2">Submit Work (PDF/Doc)</p>
-                                     <input type="file" accept=".pdf,.doc,.docx" onChange={(e) => handleAssignmentSubmission(e, assign.id, assign.title, assign.description, assign.total_points)} disabled={uploading} className="block w-full text-sm text-gray-900 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+                                     <input type="file" accept=".pdf" onChange={(e) => handleAssignmentSubmission(e, assign.id, assign.title, assign.description, assign.total_points)} disabled={uploading} className="block w-full text-sm text-gray-900 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
                                      {uploading && <p className="text-xs text-blue-500 mt-2 animate-pulse">AI Grading in progress...</p>}
                                    </>
                                 )}
@@ -493,7 +641,6 @@ export default function EnhancedCoursePage() {
                         </div>
                       )}
 
-                      {/* Lecturer View */}
                       {canEdit && (
                         <div className="mt-4 pt-4 border-t border-gray-100">
                           <button 
@@ -523,7 +670,7 @@ export default function EnhancedCoursePage() {
             </div>
             <div className="bg-white rounded-xl shadow-sm p-6">
               <h2 className="text-lg font-bold text-gray-900 mb-4">📚 Resources</h2>
-              {canEdit && <input type="file" accept=".pdf" onChange={handleUploadSupplementary} disabled={uploading} className="block w-full text-xs mb-4 text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-gray-100 file:text-gray-700"/>}
+              {canEdit && !isCourseRep && <input type="file" accept=".pdf" onChange={handleUploadSupplementary} disabled={uploading} className="block w-full text-xs mb-4 text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-gray-100 file:text-gray-700"/>}
               {supplementaryMaterials.map(m => (
                 <div key={m.id} className="flex justify-between items-center p-2 mb-2 bg-gray-50 rounded border border-gray-100">
                   <span className="text-xs truncate w-24 text-gray-700">{m.title}</span>
@@ -535,6 +682,39 @@ export default function EnhancedCoursePage() {
         </div>
 
         {/* --- MODALS --- */}
+
+        {/* PAYWALL MODAL */}
+        {showPaywall && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-300">
+                <div className="bg-white rounded-2xl p-8 w-full max-w-md text-center shadow-2xl border-t-4 border-blue-600 transform scale-100 transition-all">
+                    <div className="text-5xl mb-4">🔓</div>
+                    <h2 className="text-2xl font-bold text-gray-900 mb-2">Unlock {course?.title}</h2>
+                    <p className="text-gray-500 mb-6">Get full access to all weekly notes, AI tutoring, and quiz grading for the entire semester.</p>
+                    
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                        <button 
+                            onClick={() => handlePayment(15, 'single')} 
+                            className="p-4 border-2 border-blue-100 rounded-xl hover:border-blue-500 hover:bg-blue-50 transition flex flex-col items-center"
+                        >
+                            <p className="text-xs font-bold text-gray-500 uppercase mb-1">This Course</p>
+                            <p className="text-3xl font-bold text-blue-700">₵15</p>
+                            <p className="text-[10px] text-gray-400 mt-1">One-time payment</p>
+                        </button>
+                        <button 
+                            onClick={() => handlePayment(50, 'bundle')} 
+                            className="p-4 border-2 border-purple-100 rounded-xl hover:border-purple-500 hover:bg-purple-50 transition relative overflow-hidden flex flex-col items-center"
+                        >
+                            <span className="absolute top-0 right-0 bg-purple-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-bl-lg">BEST VALUE</span>
+                            <p className="text-xs font-bold text-gray-500 uppercase mb-1">Semester Bundle</p>
+                            <p className="text-3xl font-bold text-purple-700">₵50</p>
+                            <p className="text-[10px] text-gray-400 mt-1">Access ALL 6 courses</p>
+                        </button>
+                    </div>
+                    
+                    <button onClick={() => setShowPaywall(false)} className="text-sm text-gray-400 hover:text-gray-600 underline font-medium">Maybe later</button>
+                </div>
+            </div>
+        )}
 
         {/* 1. GRADEBOOK MODAL (List View) */}
         {showModal === 'submissions' && (

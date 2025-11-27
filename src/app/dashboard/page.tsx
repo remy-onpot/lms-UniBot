@@ -4,20 +4,22 @@ import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ProgressRing } from '@/components/ProgressRing'; 
+import OnboardingWizard from '@/components/OnboardingWizard';
 
 export default function Dashboard() {
   const [user, setUser] = useState<any>(null);
   const [role, setRole] = useState<string | null>(null);
+  const [isCourseRep, setIsCourseRep] = useState(false);
   const [loading, setLoading] = useState(true);
-  
-  // "Independent" means they are NOT linked to a University
-  const [isIndependent, setIsIndependent] = useState(false);
+  const [profile, setProfile] = useState<any>(null);
   
   const [classes, setClasses] = useState<any[]>([]);
-  const [unreadCounts, setUnreadCounts] = useState<{ [key: string]: number }>({});
-  
+  const [ownedClassesCount, setOwnedClassesCount] = useState(0);
+
+  const [showWizard, setShowWizard] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showJoinModal, setShowJoinModal] = useState(false);
+  const [showInviteTA, setShowInviteTA] = useState(false);
   
   const [newClass, setNewClass] = useState({ name: '', description: '' });
   const [joinCode, setJoinCode] = useState('');
@@ -30,49 +32,57 @@ export default function Dashboard() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return router.push('/login');
 
-      // 1. Fetch User Profile & Role
-      const { data: profile } = await supabase
+      const { data: userProfile } = await supabase
         .from('users')
-        .select('role, university_id')
+        .select('*')
         .eq('id', user.id)
         .single();
 
-      const userRole = profile?.role || 'student';
-      const hasUniversity = !!profile?.university_id;
+      const userRole = userProfile?.role || 'student';
+      const isRep = userProfile?.is_course_rep || false;
 
-      // 2. ROUTING LOGIC (Dynamic - No Hardcoded IDs)
-      
-      if (userRole === 'super_admin') {
-        return router.replace('/super-admin');
-      }
-
-      if (userRole === 'university_admin') {
-        return router.replace('/dashboard/university-admin');
-      }
-
-      // Lecturers & Students Stay Here
       setUser(user);
+      setProfile(userProfile);
       setRole(userRole);
-      setIsIndependent(!hasUniversity);
+      setIsCourseRep(isRep);
       
-      await fetchData(userRole, user.id);
+      // TRIGGER WIZARD IF NEEDED
+      if ((userRole === 'lecturer' || isRep) && !userProfile?.onboarding_completed) {
+        setShowWizard(true);
+      }
       
+      await fetchData(userRole, user.id, isRep);
       setLoading(false);
     };
     checkSession();
   }, [router]);
 
-  const fetchData = async (role: string, userId: string) => {
+  const fetchData = async (role: string, userId: string, isRep: boolean) => {
     let classesData: any[] = [];
     
-    if (role === 'lecturer') {
+    // 1. Fetch Owned Classes (Lecturer or Rep)
+    if (role === 'lecturer' || isRep) {
       const { data } = await supabase
         .from('class_instructors')
         .select('class_id, classes(*)')
         .eq('lecturer_id', userId);
       
-      classesData = data?.map((e: any) => e.classes) || [];
-    } else {
+      const owned = data?.map((e: any) => e.classes) || [];
+      const classMap = new Map();
+      owned.forEach(c => classMap.set(c.id, { ...c, isOwner: true }));
+      
+      // Check how many they actually created vs just joined as instructor
+      const { count } = await supabase
+        .from('classes')
+        .select('*', { count: 'exact', head: true })
+        .eq('lecturer_id', userId);
+        
+      setOwnedClassesCount(count || 0);
+      classesData = Array.from(classMap.values());
+    } 
+    
+    // 2. Fetch Enrolled Classes (Student view)
+    if (role === 'student') {
       const { data: enrolled } = await supabase
         .from('class_enrollments')
         .select(`
@@ -84,54 +94,33 @@ export default function Dashboard() {
         .eq('student_id', userId);
       
       if (enrolled) {
-        classesData = enrolled.map((e: any) => {
+        const enrolledClasses = enrolled.map((e: any) => {
             const cls = e.classes;
-            const totalQuizzes = cls.courses?.flatMap((c: any) => c.quizzes || []).length || 0;
-            const takenQuizzes = cls.courses?.flatMap((c: any) => c.quizzes || [])
-                .filter((q: any) => q.quiz_results?.some((r: any) => r.student_id === userId)).length || 0;
-            const progress = totalQuizzes > 0 ? Math.round((takenQuizzes / totalQuizzes) * 100) : 0;
+            
+            const allQuizzes = cls.courses?.flatMap((c: any) => c.quizzes || []) || [];
+            const totalQuizzes = allQuizzes.length;
+            
+            const takenQuizzes = allQuizzes.filter((q: any) => 
+                q.quiz_results && Array.isArray(q.quiz_results) && q.quiz_results.some((r: any) => r.student_id === userId)
+            ).length;
 
-            return { ...cls, progress, totalQuizzes, takenQuizzes };
+            let progress = 0;
+            if (totalQuizzes > 0) {
+                progress = Math.round((takenQuizzes / totalQuizzes) * 100);
+            }
+            if (isNaN(progress)) progress = 0;
+
+            return { ...cls, progress, totalQuizzes, takenQuizzes, isOwner: false };
+        });
+        
+        // Merge without duplicates
+        const currentIds = new Set(classesData.map(c => c.id));
+        enrolledClasses.forEach(c => {
+            if(!currentIds.has(c.id)) classesData.push(c);
         });
       }
     }
-
     setClasses(classesData);
-
-    if (role === 'student' && classesData.length > 0) {
-      await fetchUnreadCounts(classesData.map(c => c.id), userId);
-    }
-  };
-
-  const fetchUnreadCounts = async (classIds: string[], userId: string) => {
-    if (classIds.length === 0) return;
-    try {
-      const { data: allAnnouncements } = await supabase
-        .from('class_announcements')
-        .select('id, class_id')
-        .in('class_id', classIds);
-
-      if (!allAnnouncements?.length) return;
-
-      const { data: readReceipts } = await supabase
-        .from('announcement_reads')
-        .select('announcement_id')
-        .eq('user_id', userId)
-        .in('announcement_id', allAnnouncements.map(a => a.id));
-
-      const readSet = new Set(readReceipts?.map(r => r.announcement_id));
-      const counts: { [key: string]: number } = {};
-
-      classIds.forEach(id => counts[id] = 0);
-      allAnnouncements.forEach(announcement => {
-        if (!readSet.has(announcement.id)) {
-          counts[announcement.class_id] = (counts[announcement.class_id] || 0) + 1;
-        }
-      });
-      setUnreadCounts(counts);
-    } catch (error) {
-      console.error("Error fetching counts:", error);
-    }
   };
 
   const handleCreateClass = async (e: React.FormEvent) => {
@@ -143,23 +132,15 @@ export default function Dashboard() {
     const accessCode = `${prefix}-${randomNum}`;
 
     const { data: createdClass, error } = await supabase.from('classes').insert([{
-      name: newClass.name,
-      description: newClass.description,
-      access_code: accessCode,
-      lecturer_id: user.id 
+      name: newClass.name, description: newClass.description, access_code: accessCode, lecturer_id: user.id 
     }]).select().single();
 
-    if (error) {
-        alert(error.message);
-    } else {
-        await supabase.from('class_instructors').insert([{
-            lecturer_id: user.id,
-            class_id: createdClass.id
-        }]);
-
+    if (error) alert(error.message);
+    else {
+        await supabase.from('class_instructors').insert([{ lecturer_id: user.id, class_id: createdClass.id }]);
         alert(`Class Created! Access Code: ${accessCode}`);
         setShowCreateModal(false);
-        fetchData('lecturer', user.id);
+        fetchData(role!, user.id, isCourseRep);
     }
     setProcessing(false);
   };
@@ -167,223 +148,196 @@ export default function Dashboard() {
   const handleJoinClass = async (e: React.FormEvent) => {
     e.preventDefault();
     setProcessing(true);
-
     const cleanCode = joinCode.trim().toUpperCase();
+    const { data: classData, error: rpcError } = await supabase.rpc('get_class_id_by_code', { class_code: cleanCode }).single() as any;
 
-    // FIX: Added type casting 'as any' to satisfy TypeScript
-    const { data: classData, error: rpcError } = await supabase
-      .rpc('get_class_id_by_code', { class_code: cleanCode })
-      .single() as any;
+    if (rpcError || !classData) { alert("Invalid Class Code."); setProcessing(false); return; }
 
-    if (rpcError || !classData) {
-      console.error('Join error:', rpcError);
-      alert("Invalid Class Code or Class Locked.");
-      setProcessing(false);
-      return;
-    }
-
-    const table = role === 'lecturer' ? 'class_instructors' : 'class_enrollments';
-    const idField = role === 'lecturer' ? 'lecturer_id' : 'student_id';
+    const table = 'class_enrollments';
+    const idField = 'student_id';
+    
+    const { data: existing } = await supabase.from(table).select('id').eq(idField, user.id).eq('class_id', classData.id).maybeSingle();
+    if (existing) { alert("You are already in this class!"); setProcessing(false); return; }
 
     const { error: joinError } = await supabase.from(table).insert([{ [idField]: user.id, class_id: classData.id }]);
 
-    if (joinError) {
-      if (joinError.code === '23505') alert("You are already in this class!");
-      else alert("Error joining class: " + joinError.message);
-    } else {
-      alert(`Successfully joined ${classData.name}!`);
-      setShowJoinModal(false);
-      setJoinCode('');
-      fetchData(role!, user.id);
-    }
+    if (joinError) alert(joinError.message);
+    else { alert(`Joined ${classData.name}!`); setShowJoinModal(false); fetchData(role!, user.id, isCourseRep); }
     setProcessing(false);
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    router.push('/login');
-  };
+  const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
 
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="text-center">
-        <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-        <p className="text-gray-600 font-medium">Loading Portal...</p>
-      </div>
-    </div>
-  );
+  if (loading) return <div className="p-20 text-center animate-pulse">Loading Dashboard...</div>;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-slate-50 pb-20">
+      {showWizard && <OnboardingWizard userId={user.id} role={role as any} isCourseRep={isCourseRep} onComplete={() => { setShowWizard(false); fetchData(role!, user.id, isCourseRep); }} />}
+
       <nav className="bg-white shadow-sm sticky top-0 z-10">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-          <div className="flex h-16 justify-between items-center">
-            <div className="flex items-center gap-2">
-              <span className="text-xl font-bold text-gray-800">LMS Portal</span>
-              {role === 'lecturer' && (
-                <span className={`text-[10px] uppercase px-2 py-0.5 rounded font-bold border ${isIndependent ? 'bg-green-50 text-green-700 border-green-200' : 'bg-purple-50 text-purple-700 border-purple-200'}`}>
-                  {isIndependent ? 'Independent' : 'University Staff'}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-gray-500 hidden sm:block">{user?.email} ({role})</span>
-              <button onClick={handleLogout} className="text-sm text-red-600 hover:text-red-800 font-medium">Log Out</button>
-            </div>
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-16 flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">🎓</span>
+            <span className="font-bold text-slate-900">UniBot</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-slate-500 hidden sm:block">{profile?.full_name}</span>
+            <button onClick={handleLogout} className="text-sm text-red-600 font-bold hover:underline">Log Out</button>
           </div>
         </div>
       </nav>
 
-      <main className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
-        <div className="mb-8 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">
-              {role === 'lecturer' ? 'Teaching Dashboard' : 'My Classes'}
-            </h1>
-            <p className="mt-2 text-gray-600">
-              {role === 'lecturer' 
-                ? (isIndependent ? 'Manage your personal classes.' : 'View classes assigned by your university.')
-                : 'Select a class to continue learning.'}
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 space-y-8">
+        
+        <div className="bg-linear-to-r from-slate-900 to-slate-800 rounded-2xl p-8 text-white shadow-xl relative overflow-hidden">
+          <div className="relative z-10">
+            <h1 className="text-3xl font-bold mb-2">Hello, {profile?.full_name?.split(' ')[0]} 👋</h1>
+            <p className="text-slate-300 mb-6 max-w-xl">
+              {role === 'lecturer' || isCourseRep
+                ? "Your classroom is ready. Manage your content and students below." 
+                : "Ready to learn? Access your courses and get instant AI tutoring."}
             </p>
-          </div>
-          
-          <div className="flex gap-2">
-            {role === 'lecturer' && isIndependent && (
-              <button onClick={() => setShowCreateModal(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 shadow-lg transition">
-                + Create Class
-              </button>
-            )}
             
-            <button onClick={() => setShowJoinModal(true)} className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg font-bold hover:bg-gray-50 transition">
-              Join Existing
-            </button>
+            <div className="flex flex-wrap gap-3 mt-6">
+              
+              {/* CREATE CLASS - Visible to Lecturer OR Course Rep (if they don't have one) */}
+              {(role === 'lecturer' || (isCourseRep && ownedClassesCount === 0)) && (
+                <button onClick={() => setShowCreateModal(true)} className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-xl font-bold transition shadow-lg flex items-center gap-2">
+                  <span>+</span> Create Class
+                </button>
+              )}
+
+              {/* INVITE TA - Visible to Lecturers with Elite Plan */}
+              {role === 'lecturer' && profile?.plan_tier === 'elite' && (
+                <button onClick={() => setShowInviteTA(true)} className="bg-white/10 hover:bg-white/20 text-white px-6 py-3 rounded-xl font-bold transition backdrop-blur-sm flex items-center gap-2">
+                  <span>🤝</span> Invite Co-Lecturer
+                </button>
+              )}
+
+              {/* JOIN CLASS - Visible to Everyone */}
+              <button onClick={() => setShowJoinModal(true)} className="bg-white/10 hover:bg-white/20 text-white px-6 py-3 rounded-xl font-bold transition backdrop-blur-sm flex items-center gap-2">
+                <span>🔑</span> Join Existing Class
+              </button>
+            </div>
           </div>
+          <div className="absolute top-0 right-0 -mt-10 -mr-10 w-64 h-64 bg-white/5 rounded-full blur-3xl"></div>
+          <div className="absolute bottom-0 right-20 -mb-10 w-40 h-40 bg-blue-500/20 rounded-full blur-2xl"></div>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-          {classes.length === 0 ? (
-            <div className="col-span-full p-12 text-center text-gray-500 border-2 border-dashed rounded-xl bg-white/50">
-              <div className="text-4xl mb-3">📚</div>
-              <p className="font-medium">No classes found.</p>
-              <p className="text-sm mt-1 text-gray-400">
-                {role === 'lecturer' 
-                  ? (isIndependent ? "Create a class to get started!" : "Contact your University Admin to be assigned classes.") 
-                  : "Join a class to see your courses."}
-              </p>
-            </div>
-          ) : (
-            classes.map((cls) => (
-              <div 
-                key={cls.id} 
-                className="group relative rounded-xl bg-white p-6 shadow-sm border border-gray-100 hover:shadow-xl hover:border-blue-200 transition-all duration-200 cursor-pointer" 
-                onClick={() => router.push(`/dashboard/class/${cls.id}`)}
-              >
-                {role === 'student' && unreadCounts[cls.id] > 0 && (
-                  <div className="absolute top-3 right-3 z-10">
-                    <span className="relative flex h-3 w-3">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
-                    </span>
-                  </div>
-                )}
+        {/* STATS */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+           <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
+              <p className="text-xs text-slate-500 font-bold uppercase">Active Classes</p>
+              <p className="text-2xl font-bold text-slate-900">{classes.length}</p>
+           </div>
+           {role === 'student' && (
+             <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100">
+                <p className="text-xs text-slate-500 font-bold uppercase">Pending Quizzes</p>
+                <p className="text-2xl font-bold text-orange-600">
+                    {classes.reduce((acc, c) => acc + (isNaN((c.totalQuizzes || 0) - (c.takenQuizzes || 0)) ? 0 : ((c.totalQuizzes || 0) - (c.takenQuizzes || 0))), 0)}
+                </p>
+             </div>
+           )}
+        </div>
 
-                <div className="mb-4 flex justify-between items-start">
-                  <div className="h-12 w-12 rounded-xl bg-indigo-50 flex items-center justify-center text-2xl text-indigo-600 group-hover:scale-110 transition-transform">
-                    🏫
-                  </div>
-                  
-                  {role === 'student' && cls.progress !== undefined && (
-                    <div className="w-12 h-12 shrink-0 -mt-1">
-                        <ProgressRing radius={24} stroke={3} progress={cls.progress} color={cls.progress === 100 ? '#10b981' : '#3b82f6'} />
-                    </div>
-                  )}
-                  
-                  {role === 'lecturer' && (
-                    <span className="text-xs font-mono bg-gray-50 px-2 py-1 rounded-md text-gray-600 border border-gray-200">
-                      {cls.access_code}
-                    </span>
-                  )}
-                </div>
-                
-                <h3 className="text-lg font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{cls.name}</h3>
-                <p className="mt-2 text-sm text-gray-500 line-clamp-2 h-10">{cls.description || 'No description provided.'}</p>
-                
-                {role === 'student' && (
-                    <div className="mt-4 flex items-center gap-2 text-xs text-gray-500 font-medium">
-                       <span>📊 {cls.takenQuizzes}/{cls.totalQuizzes} Quizzes</span>
-                    </div>
-                )}
-                
-                <div className="mt-4 pt-4 border-t border-gray-50 flex justify-between items-center">
-                  <span className="text-sm font-semibold text-gray-400 group-hover:text-blue-600 transition-colors">Open Class</span>
-                  <span className="text-gray-300 group-hover:translate-x-1 transition-transform">→</span>
-                </div>
+        {/* CLASSES LIST */}
+        <div>
+          <h2 className="text-xl font-bold text-slate-900 mb-4">Your Classes</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {classes.length === 0 ? (
+              <div className="col-span-full p-12 text-center border-2 border-dashed border-slate-200 rounded-xl bg-slate-50">
+                <p className="text-slate-500">No classes yet. Click the button above to get started!</p>
               </div>
-            ))
-          )}
+            ) : (
+              classes.map((cls) => (
+                <div 
+                  key={cls.id} 
+                  onClick={() => router.push(`/dashboard/class/${cls.id}`)}
+                  className="group bg-white p-6 rounded-2xl border border-slate-100 shadow-sm hover:shadow-xl hover:border-blue-100 transition-all cursor-pointer relative overflow-hidden"
+                >
+                  <div className="flex justify-between items-start mb-4">
+                    <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center text-2xl group-hover:scale-110 transition-transform">📚</div>
+                    
+                    {!cls.isOwner && cls.totalQuizzes > 0 && (
+                       <div className="w-10 h-10">
+                           <ProgressRing radius={20} stroke={3} progress={cls.progress || 0} color="#3b82f6" />
+                       </div>
+                    )}
+                  </div>
+                  <h3 className="font-bold text-lg text-slate-900 mb-1 group-hover:text-blue-600 transition">{cls.name}</h3>
+                  <p className="text-sm text-slate-500 line-clamp-2">{cls.description}</p>
+                  
+                  {cls.isOwner && (
+                    <div className="mt-4 pt-4 border-t border-slate-50 flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-400 uppercase">Code:</span>
+                      <span className="text-xs font-mono bg-slate-100 px-2 py-1 rounded text-slate-700 select-all">{cls.access_code}</span>
+                    </div>
+                  )}
+                  
+                  {!cls.isOwner && (
+                    <div className="mt-4 pt-4 border-t border-slate-50 flex items-center gap-2 text-xs text-gray-500 font-medium">
+                       {cls.totalQuizzes > 0 ? (
+                           <span>📝 {cls.takenQuizzes}/{cls.totalQuizzes} Quizzes</span>
+                       ) : (
+                           <span>No quizzes yet</span>
+                       )}
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </main>
 
-      {showCreateModal && role === 'lecturer' && isIndependent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm transition-all">
-          <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl transform transition-all scale-100">
-            <h2 className="mb-6 text-2xl font-bold text-gray-900">Create New Class</h2>
-            <form onSubmit={handleCreateClass} className="space-y-5">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Class Name</label>
-                <input 
-                  className="w-full border border-gray-200 p-3 rounded-xl text-gray-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-blue-500/20 transition-all" 
-                  placeholder="e.g. Advanced Marketing 101" 
-                  value={newClass.name} 
-                  onChange={e => setNewClass({...newClass, name: e.target.value})} 
-                  required 
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                <textarea 
-                  className="w-full border border-gray-200 p-3 rounded-xl text-gray-900 h-32 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-blue-500/20 resize-none transition-all" 
-                  placeholder="What will students learn?" 
-                  value={newClass.description} 
-                  onChange={e => setNewClass({...newClass, description: e.target.value})} 
-                />
-              </div>
-              <div className="flex gap-3 mt-8">
-                <button type="button" onClick={() => setShowCreateModal(false)} className="flex-1 py-3 border border-gray-200 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors">Cancel</button>
-                <button type="submit" disabled={processing} className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-600/20 transition-all hover:-translate-y-0.5 disabled:opacity-70 disabled:translate-y-0">
-                  {processing ? 'Creating...' : 'Create Class'}
-                </button>
-              </div>
+      <Link href="/ai-assistant" className="fixed bottom-8 right-8 bg-slate-900 text-white p-4 rounded-full shadow-2xl hover:bg-slate-800 hover:scale-110 transition-all z-50 group flex items-center gap-0 hover:gap-2 hover:pr-6">
+        <span className="text-2xl">🤖</span>
+        <span className="w-0 overflow-hidden group-hover:w-auto transition-all whitespace-nowrap font-bold text-sm">Ask AI</span>
+      </Link>
+
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="bg-white p-8 rounded-2xl w-full max-w-md shadow-2xl">
+            <h2 className="text-xl font-bold mb-4">Create New Class</h2>
+            <form onSubmit={handleCreateClass} className="space-y-4">
+                <input placeholder="Class Name" className="w-full border p-3 rounded-xl" value={newClass.name} onChange={e=>setNewClass({...newClass, name: e.target.value})} required />
+                <textarea placeholder="Description" className="w-full border p-3 rounded-xl h-24" value={newClass.description} onChange={e=>setNewClass({...newClass, description: e.target.value})} />
+                <div className="flex gap-2">
+                    <button type="button" onClick={()=>setShowCreateModal(false)} className="flex-1 py-3 border rounded-xl font-bold text-slate-600">Cancel</button>
+                    <button type="submit" disabled={processing} className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold">{processing ? '...' : 'Create'}</button>
+                </div>
             </form>
           </div>
         </div>
       )}
 
       {showJoinModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm transition-all">
-          <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl">
-            <div className="text-center mb-6">
-              <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">🔑</div>
-              <h2 className="text-2xl font-bold text-gray-900">Join a Class</h2>
-              <p className="text-gray-500 mt-2">Enter the access code shared by your instructor.</p>
-            </div>
-            
-            <form onSubmit={handleJoinClass} className="space-y-6">
-              <input 
-                className="w-full border-2 border-gray-200 p-4 rounded-xl text-gray-900 text-center font-mono text-2xl uppercase tracking-widest outline-none focus:border-green-500 focus:ring-4 focus:ring-green-500/10 transition-all placeholder-gray-300" 
-                placeholder="XXX-0000" 
-                value={joinCode} 
-                onChange={e => setJoinCode(e.target.value.toUpperCase())} 
-                required 
-                maxLength={9}
-              />
-              <div className="flex gap-3">
-                <button type="button" onClick={() => setShowJoinModal(false)} className="flex-1 py-3 border border-gray-200 rounded-xl text-gray-700 font-medium hover:bg-gray-50 transition-colors">Cancel</button>
-                <button type="submit" disabled={processing} className="flex-1 py-3 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 shadow-lg shadow-green-600/20 transition-all hover:-translate-y-0.5 disabled:opacity-70 disabled:translate-y-0">
-                  {processing ? 'Joining...' : 'Join Class'}
-                </button>
-              </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="bg-white p-8 rounded-2xl w-full max-w-md shadow-2xl">
+            <h2 className="text-xl font-bold mb-4">Join Existing Class</h2>
+            <form onSubmit={handleJoinClass} className="space-y-4">
+                <input placeholder="Enter Class Code" className="w-full border p-3 rounded-xl text-center font-mono text-xl uppercase tracking-widest" value={joinCode} onChange={e=>setJoinCode(e.target.value)} required />
+                <div className="flex gap-2">
+                    <button type="button" onClick={()=>setShowJoinModal(false)} className="flex-1 py-3 border rounded-xl font-bold text-slate-600">Cancel</button>
+                    <button type="submit" disabled={processing} className="flex-1 py-3 bg-green-600 text-white rounded-xl font-bold">{processing ? '...' : 'Join'}</button>
+                </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showInviteTA && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="bg-white p-8 rounded-2xl w-full max-w-sm shadow-2xl text-center">
+            <div className="w-12 h-12 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center text-2xl mx-auto mb-4">🤝</div>
+            <h2 className="text-xl font-bold mb-2">Invite Co-Lecturer</h2>
+            <p className="text-gray-500 text-sm mb-6">Share this code with your TA or colleague to give them admin access.</p>
+            <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6">
+                <p className="font-mono text-2xl font-bold text-orange-800 tracking-widest select-all">
+                    {`TA-${user.id.substring(0,4).toUpperCase()}-${Math.floor(Math.random()*1000)}`}
+                </p>
+            </div>
+            <button onClick={() => setShowInviteTA(false)} className="w-full py-3 bg-gray-900 text-white rounded-xl font-bold">Done</button>
           </div>
         </div>
       )}

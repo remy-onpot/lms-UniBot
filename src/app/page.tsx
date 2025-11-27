@@ -6,7 +6,6 @@ import Link from 'next/link';
 import { motion, useScroll, useTransform } from 'framer-motion';
 
 // --- Hero Sparkles / Background Effect ---
-// A simple SVG background pattern for a tech feel
 const GridPattern = () => (
   <svg className="absolute inset-0 -z-10 h-full w-full stroke-gray-200 mask-[radial-gradient(100%_100%_at_top_right,white,transparent)]" aria-hidden="true">
     <defs>
@@ -55,7 +54,7 @@ export default function LandingPage() {
               </span>
               {dbStatus === 'connected' && (
                 <span className="hidden sm:inline-block ml-3 px-2 py-0.5 bg-green-50 text-green-700 text-[10px] uppercase tracking-wider font-bold rounded-full border border-green-200">
-                  System Operational
+                  System Online
                 </span>
               )}
             </div>
@@ -96,7 +95,7 @@ export default function LandingPage() {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
             </span>
-            v2.0 is live: Multi-University Support
+            For Lecturers & Students
           </motion.div>
 
           <motion.h1 
@@ -105,9 +104,9 @@ export default function LandingPage() {
             transition={{ duration: 0.5, delay: 0.1 }}
             className="text-5xl md:text-7xl font-bold text-slate-900 mb-6 leading-[1.1] tracking-tight"
           >
-            The Operating System for <br />
+            Supercharge Your <br />
             <span className="bg-linear-to-r from-blue-600 via-purple-600 to-pink-600 bg-clip-text text-transparent">
-              Modern Education
+              Classroom Experience
             </span>
           </motion.h1>
 
@@ -117,8 +116,8 @@ export default function LandingPage() {
             transition={{ duration: 0.5, delay: 0.2 }}
             className="text-xl text-slate-600 mb-10 max-w-2xl mx-auto leading-relaxed"
           >
-            Automated grading, AI-powered tutoring, and seamless course management. 
-            Built for forward-thinking universities and independent educators.
+            Lecturers save hours on grading. Students get 24/7 AI tutoring.<br/>
+            The modern way to manage quizzes, handouts, and grades.
           </motion.p>
 
           <motion.div 
@@ -131,14 +130,14 @@ export default function LandingPage() {
               href="/login"
               className="px-8 py-4 bg-blue-600 text-white rounded-xl font-bold text-lg hover:bg-blue-700 transition shadow-xl shadow-blue-500/20 hover:scale-105 active:scale-95"
             >
-              Start Free Trial
+              Create a Class
             </Link>
-            <button
-              onClick={() => document.getElementById('features')?.scrollIntoView({ behavior: 'smooth' })}
+            <Link
+              href="/login"
               className="px-8 py-4 bg-white text-slate-900 rounded-xl font-bold text-lg hover:bg-slate-50 transition border border-slate-200 hover:border-slate-300 shadow-sm"
             >
-              Explore Features
-            </button>
+              Join a Class
+            </Link>
           </motion.div>
         </motion.div>
       </section>
@@ -147,18 +146,18 @@ export default function LandingPage() {
       <section id="features" className="py-24 px-4 bg-slate-50">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-20">
-            <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mb-4">Everything you need to scale</h2>
-            <p className="text-lg text-slate-600">Powerful tools wrapped in a simple interface.</p>
+            <h2 className="text-3xl md:text-4xl font-bold text-slate-900 mb-4">Tools that save you time</h2>
+            <p className="text-lg text-slate-600">Everything you need to run a modern class.</p>
           </div>
 
           <div className="grid md:grid-cols-3 gap-8">
             {[
-              { title: "AI Quiz Gen", icon: "⚡", desc: "Turn PDFs into quizzes instantly.", color: "blue" },
-              { title: "24/7 AI Tutor", icon: "🤖", desc: "Personalized help for every student.", color: "purple" },
-              { title: "Smart Analytics", icon: "📊", desc: "Track performance in real-time.", color: "green" },
-              { title: "Instant Alerts", icon: "🔔", desc: "Push notifications for updates.", color: "orange" },
-              { title: "Weekly Planner", icon: "📅", desc: "Auto-organized course schedules.", color: "pink" },
-              { title: "Multi-Tenant", icon: "🏢", desc: "Separate spaces for universities.", color: "indigo" }
+              { title: "AI Quiz Gen", icon: "⚡", desc: "Turn PDF handouts into quizzes instantly.", color: "blue" },
+              { title: "Instant Grading", icon: "✅", desc: "Automatic grading with detailed feedback.", color: "green" },
+              { title: "24/7 AI Tutor", icon: "🤖", desc: "Personalized help based on course notes.", color: "purple" },
+              { title: "Smart Roster", icon: "👥", desc: "Easily manage students and track progress.", color: "orange" },
+              { title: "Announcements", icon: "📢", desc: "Keep everyone updated with push alerts.", color: "pink" },
+              { title: "Secure Access", icon: "🔒", desc: "Content protection and secure logins.", color: "indigo" }
             ].map((feature, i) => (
               <motion.div
                 key={i}
@@ -186,67 +185,68 @@ export default function LandingPage() {
         
         <div className="max-w-7xl mx-auto relative z-10">
           <div className="text-center mb-20">
-            <h2 className="text-4xl font-bold text-slate-900 mb-4">Simple, Transparent Pricing</h2>
-            <p className="text-xl text-slate-600">Start for free, upgrade as you grow.</p>
+            <h2 className="text-4xl font-bold text-slate-900 mb-4">Flexible Pricing</h2>
+            <p className="text-xl text-slate-600">Free for trial. Affordable for pros.</p>
           </div>
 
           <div className="grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
-            {/* Free Plan */}
+            {/* Starter Plan */}
             <div className="p-8 rounded-3xl border border-slate-200 bg-white hover:border-blue-200 transition-colors">
-              <h3 className="text-lg font-bold text-slate-900 mb-2">Free</h3>
-              <p className="text-slate-500 mb-6 text-sm">For solo lecturers</p>
+              <h3 className="text-lg font-bold text-slate-900 mb-2">Starter</h3>
+              <p className="text-slate-500 mb-6 text-sm">For TAs & Trials</p>
               <div className="mb-8">
-                <span className="text-4xl font-bold text-slate-900">$0</span>
+                <span className="text-4xl font-bold text-slate-900">₵0</span>
                 <span className="text-slate-500">/mo</span>
               </div>
               <ul className="space-y-4 mb-8 text-sm text-slate-600">
-                <li className="flex gap-3">✓ 1 Active Course</li>
-                <li className="flex gap-3">✓ 50 Student Limit</li>
+                <li className="flex gap-3">✓ 1 Active Class</li>
+                <li className="flex gap-3">✓ Max 50 Students</li>
                 <li className="flex gap-3">✓ Basic AI Quiz Gen</li>
               </ul>
               <Link href="/login" className="block w-full py-3 rounded-xl bg-slate-100 text-slate-900 font-bold text-center hover:bg-slate-200 transition">
-                Get Started
+                Start Free
               </Link>
             </div>
 
-            {/* Pro Plan */}
+            {/* Professional Plan */}
             <div className="relative p-8 rounded-3xl bg-slate-900 text-white shadow-2xl transform md:-translate-y-4 border border-slate-800">
               <div className="absolute top-0 right-0 bg-linear-to-r from-blue-600 to-purple-600 text-white text-xs font-bold px-3 py-1 rounded-bl-xl rounded-tr-xl">
                 POPULAR
               </div>
-              <h3 className="text-lg font-bold mb-2">Pro</h3>
-              <p className="text-slate-400 mb-6 text-sm">For serious educators</p>
+              <h3 className="text-lg font-bold mb-2">Professional</h3>
+              <p className="text-slate-400 mb-6 text-sm">For Standard Lecturers</p>
               <div className="mb-8">
-                <span className="text-4xl font-bold">$15</span>
+                <span className="text-4xl font-bold">₵300</span>
                 <span className="text-slate-400">/mo</span>
               </div>
               <ul className="space-y-4 mb-8 text-sm text-slate-300">
-                <li className="flex gap-3 text-white">✓ Unlimited Courses</li>
-                <li className="flex gap-3 text-white">✓ Unlimited Students</li>
-                <li className="flex gap-3 text-white">✓ Advanced Analytics</li>
+                <li className="flex gap-3 text-white">✓ 3 Active Classes</li>
+                <li className="flex gap-3 text-white">✓ Max 500 Students</li>
+                <li className="flex gap-3 text-white">✓ 300 AI Graded Papers</li>
                 <li className="flex gap-3 text-white">✓ Priority Support</li>
               </ul>
               <Link href="/login" className="block w-full py-3 rounded-xl bg-blue-600 text-white font-bold text-center hover:bg-blue-700 transition shadow-lg shadow-blue-900/50">
-                Start 14-Day Trial
+                Get Pro
               </Link>
             </div>
 
-            {/* Enterprise Plan */}
+            {/* Elite Plan */}
             <div className="p-8 rounded-3xl border border-slate-200 bg-white hover:border-blue-200 transition-colors">
-              <h3 className="text-lg font-bold text-slate-900 mb-2">University</h3>
-              <p className="text-slate-500 mb-6 text-sm">For full institutions</p>
+              <h3 className="text-lg font-bold text-slate-900 mb-2">Elite</h3>
+              <p className="text-slate-500 mb-6 text-sm">For Power Users</p>
               <div className="mb-8">
-                <span className="text-4xl font-bold text-slate-900">Custom</span>
+                <span className="text-4xl font-bold text-slate-900">₵600</span>
+                <span className="text-slate-500">/mo</span>
               </div>
               <ul className="space-y-4 mb-8 text-sm text-slate-600">
-                <li className="flex gap-3">✓ Custom Domain</li>
-                <li className="flex gap-3">✓ SSO Integration</li>
-                <li className="flex gap-3">✓ White-label Branding</li>
-                <li className="flex gap-3">✓ Dedicated Success Manager</li>
+                <li className="flex gap-3">✓ Unlimited Classes</li>
+                <li className="flex gap-3">✓ Max 2,000 Students</li>
+                <li className="flex gap-3">✓ 1,500 AI Graded Papers</li>
+                <li className="flex gap-3">✓ 3 Admin Seats (Co-Lecturers)</li>
               </ul>
-              <button className="block w-full py-3 rounded-xl border border-slate-200 text-slate-900 font-bold text-center hover:bg-slate-50 transition">
+              <Link href="/login" className="block w-full py-3 rounded-xl border border-slate-200 text-slate-900 font-bold text-center hover:bg-slate-50 transition">
                 Contact Sales
-              </button>
+              </Link>
             </div>
           </div>
         </div>

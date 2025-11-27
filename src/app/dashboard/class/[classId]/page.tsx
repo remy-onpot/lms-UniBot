@@ -10,6 +10,7 @@ export default function ClassPage() {
   const router = useRouter();
   
   const [role, setRole] = useState<string | null>(null);
+  const [isCourseRep, setIsCourseRep] = useState(false); // Add state
   const [classInfo, setClassInfo] = useState<any>(null);
   const [courses, setCourses] = useState<any[]>([]);
   const [isInstructor, setIsInstructor] = useState(false);
@@ -32,8 +33,9 @@ export default function ClassPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return router.push('/login');
 
-      const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).single();
+      const { data: profile } = await supabase.from('users').select('role, is_course_rep').eq('id', user.id).single();
       setRole(profile?.role);
+      setIsCourseRep(profile?.is_course_rep || false); // Set it
 
       // 2. Get Class Info
       const { data: cls, error: classError } = await supabase
@@ -133,9 +135,21 @@ export default function ClassPage() {
               <button onClick={handleGoToRoster} className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-green-700 shadow-lg text-sm">
                 View Roster
               </button>
-             <button onClick={() => setShowModal(true)} className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-indigo-700 transition shadow-lg">
-               + Add Course Module
-             </button>
+              
+              {/* HIDE 'Add Module' if user is a Course Rep (if that is your rule) */}
+              {/* OR keep it if Reps are allowed to upload content too */}
+              {!isCourseRep && ( 
+                <button onClick={() => setShowModal(true)} className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-indigo-700 transition shadow-lg">
+                  + Add Course Module
+                </button>
+              )}
+              
+              {/* If Reps should NOT add modules, show them the "Invite Lecturer" button instead */}
+              {isCourseRep && (
+                  <button onClick={() => {/* Logic to show class code/invite */ alert("Share the class code: " + classInfo?.access_code)}} className="bg-purple-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-purple-700 transition shadow-lg">
+                      Invite Lecturer
+                  </button>
+              )}
             </div>
           )}
         </div>

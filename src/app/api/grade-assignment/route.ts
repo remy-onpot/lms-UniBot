@@ -3,53 +3,110 @@ import { NextResponse } from "next/server";
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY || "");
 
+// Helper function to extract JSON from mixed text
+function extractJSON(text: string): any {
+  try {
+    // 1. Try direct parse first
+    return JSON.parse(text);
+  } catch (e) {
+    // 2. If that fails, try to find the JSON object block
+    const firstOpen = text.indexOf('{');
+    const lastClose = text.lastIndexOf('}');
+    
+    if (firstOpen !== -1 && lastClose !== -1) {
+      const jsonString = text.substring(firstOpen, lastClose + 1);
+      try {
+        return JSON.parse(jsonString);
+      } catch (innerError) {
+        // 3. Last resort: aggressive cleanup of markdown/newlines
+        const cleaned = jsonString.replace(/[\n\r]/g, ' ').replace(/\\n/g, '\\n');
+        return JSON.parse(cleaned);
+      }
+    }
+    throw new Error("Could not extract valid JSON from response.");
+  }
+}
+
 export async function POST(req: Request) {
   try {
-    // 1. Accept 'maxPoints' from the frontend
     const { assignmentTitle, assignmentDescription, studentText, maxPoints } = await req.json();
 
+    // 1. Validate Input
+    if (!studentText || studentText.trim().length < 20) {
+      return NextResponse.json({
+        score: 0,
+        is_ai_generated: false,
+        feedback: "⚠️ Could not read document text. The file might be a scanned image or empty. Please convert to a text-readable PDF.",
+        breakdown: { reasoning: "No text content found." }
+      });
+    }
+
+    console.log(`📝 Grading: "${assignmentTitle}" | Length: ${studentText.length} chars`);
+
     const prompt = `
-      You are a strict university professor. Grade this student submission.
+      You are a strict university professor. Grade this student submission based on the instructions.
       
-      ASSIGNMENT: "${assignmentTitle}"
+      ASSIGNMENT TITLE: "${assignmentTitle}"
       INSTRUCTIONS: "${assignmentDescription}"
-      MAX POSSIBLE SCORE: ${maxPoints} points
+      MAX POINTS: ${maxPoints}
       
-      STUDENT SUBMISSION:
-      "${studentText ? studentText.slice(0, 25000) : ''}"
+      STUDENT SUBMISSION START:
+      ${studentText.slice(0, 25000)}
+      STUDENT SUBMISSION END
       
       TASK:
-      1. Analyze the submission for relevance, accuracy, and depth.
-      2. **Calculated Score**: Assign a score between 0 and ${maxPoints}. DO NOT grade out of 100 unless max points is 100.
-      3. **AI Detection**: Estimate if this text is likely AI-generated.
-      4. **Feedback**: Provide detailed feedback justifying the score.
+      1. Evaluate relevance, accuracy, and depth.
+      2. Assign a score out of ${maxPoints}.
+      3. Flag if it seems AI-generated (robotic, repetitive, perfect grammar but shallow).
       
-      OUTPUT JSON FORMAT ONLY:
+      CRITICAL: Return ONLY valid JSON. No markdown, no conversation.
+      
+      JSON FORMAT:
       {
-        "score": 0,
-        "is_ai_generated": false,
-        "feedback": "General summary...",
+        "score": number,
+        "is_ai_generated": boolean,
+        "feedback": "Summary feedback string",
         "breakdown": {
-           "reasoning": "Explanation of the score...",
-           "strengths": ["Point 1"],
-           "weaknesses": ["Point 1"]
+           "reasoning": "Detailed explanation of score",
+           "strengths": ["point 1", "point 2"],
+           "weaknesses": ["point 1", "point 2"]
         }
       }
     `;
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = genAI.getGenerativeModel({ 
+        model: "gemini-2.5-flash",
+        generationConfig: { responseMimeType: "application/json" }
+    });
+
     const result = await model.generateContent(prompt);
-    const responseText = result.response.text().replace(/```json|```/g, '').trim();
+    const responseText = result.response.text();
     
-    return NextResponse.json(JSON.parse(responseText));
+    console.log("🤖 AI Response Preview:", responseText.substring(0, 100));
+
+    try {
+        const jsonResponse = extractJSON(responseText);
+        return NextResponse.json(jsonResponse);
+    } catch (parseError: any) {
+        console.error("❌ JSON Parse Error:", parseError);
+        console.error("❌ Raw Text was:", responseText);
+        
+        // Return a fallback so the UI doesn't crash
+        return NextResponse.json({
+             score: 0,
+             is_ai_generated: false,
+             feedback: "Error parsing grading results. Please try again.",
+             breakdown: { reasoning: "System error: Invalid JSON from AI." }
+        });
+    }
 
   } catch (error: any) {
-    console.error("AI Grading Error:", error);
+    console.error("❌ AI Grading Error:", error);
     return NextResponse.json({ 
         score: 0, 
         is_ai_generated: false, 
-        feedback: "Error processing grading.", 
-        breakdown: { reasoning: "AI Service Unavailable" } 
-    });
+        feedback: "Error processing grading. Please try again.", 
+        breakdown: { reasoning: error.message || "AI Service Unavailable" } 
+    }, { status: 500 });
   }
 }
