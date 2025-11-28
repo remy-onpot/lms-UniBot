@@ -1,22 +1,24 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
+import { AppError, handleAPIError } from "@/lib/error-handler";
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY || "");
 
 export async function POST(req: Request) {
   try {
     const { questions, action, topicId } = await req.json();
-    // action: "enhance" or "convert"
-    // questions: raw text or parsed questions
 
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-2.5-flash",
+    if (!questions || !action) {
+      throw new AppError("Missing required fields: questions or action", 400);
+    }
+
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash"
     });
 
-    let prompt = '';
+    let prompt = "";
 
-    if (action === 'enhance') {
-      // AI enhances/rephrases lecturer's questions
+    if (action === "enhance") {
       prompt = `You are a quiz improvement assistant. Take these quiz questions and:
 1. Rephrase them for clarity and better understanding
 2. Improve the options to be more precise
@@ -26,7 +28,7 @@ export async function POST(req: Request) {
 Original questions:
 ${questions}
 
-Return ONLY a JSON array with this exact structure (no markdown, no code blocks):
+Return ONLY a JSON array in this structure:
 [
   {
     "question": "Enhanced question text",
@@ -36,13 +38,12 @@ Return ONLY a JSON array with this exact structure (no markdown, no code blocks)
   }
 ]`;
     } else {
-      // Convert raw text/format to quiz JSON
-      prompt = `Convert these questions into a standardized quiz format. Extract the questions, options, and correct answers.
+      prompt = `Convert these questions into a standardized quiz format.
 
 Raw input:
 ${questions}
 
-Return ONLY a JSON array with this exact structure (no markdown, no code blocks):
+Return ONLY a JSON array in this structure:
 [
   {
     "question": "Question text",
@@ -54,30 +55,27 @@ Return ONLY a JSON array with this exact structure (no markdown, no code blocks)
     }
 
     const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    
-    // Clean and parse
-    let cleanedText = text.trim();
-    cleanedText = cleanedText.replace(/```json\s*/g, '').replace(/```\s*/g, '');
-    
-    const firstBracket = cleanedText.indexOf('[');
-    const lastBracket = cleanedText.lastIndexOf(']');
-    
+    const aiText = result.response.text().trim();
+
+    const firstBracket = aiText.indexOf("[");
+    const lastBracket = aiText.lastIndexOf("]");
+
     if (firstBracket === -1 || lastBracket === -1) {
-      return NextResponse.json({ 
-        error: "AI did not return valid JSON", 
-        raw_output: text 
-      }, { status: 500 });
+      throw new AppError("AI did not return a valid JSON array.", 500);
     }
-    
-    cleanedText = cleanedText.substring(firstBracket, lastBracket + 1);
-    
-    const quizData = JSON.parse(cleanedText);
-    
+
+    const cleaned = aiText.substring(firstBracket, lastBracket + 1);
+    let quizData;
+
+    try {
+      quizData = JSON.parse(cleaned);
+    } catch {
+      throw new AppError("Failed to parse AI JSON output.", 500);
+    }
+
     return NextResponse.json({ quiz: quizData });
 
-  } catch (error: any) {
-    console.error("Manual questions error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    return handleAPIError(error);
   }
 }
