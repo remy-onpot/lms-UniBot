@@ -1,5 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
+import { quizConfigSchema } from "@/lib/validators";
+import { z } from "zod";
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY || "");
 
@@ -7,20 +9,41 @@ export async function POST(req: Request) {
   try {
     const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ error: "Server configuration error: Missing API Key" }, { status: 500 });
+      return NextResponse.json(
+        { error: "Server configuration error: Missing API Key" },
+        { status: 500 }
+      );
     }
 
-    // 1. Receive Configuration
-    const { documentText, topic, difficulty, numQuestions, type } = await req.json();
-    
+    // 1. Read body & validate using Zod
+    const body = await req.json();
+
+    const validated = quizConfigSchema.parse(body);
+
+    const { documentText, topic, difficulty, numQuestions, type } = validated;
+
     if (!documentText) {
       return NextResponse.json({ error: "No text provided" }, { status: 400 });
     }
 
-    console.log("📝 Generating quiz with params:", { topic, difficulty, numQuestions, type });
+    console.log("📝 Generating quiz with params:", {
+      topic,
+      difficulty,
+      numQuestions,
+      type,
+    });
 
-    // 2. Build the prompt with instructions
-    const prompt = `You are a strict teacher. Generate a quiz based ONLY on the provided text.
+   const prompt = `
+You are a strict, no-nonsense teacher with these qualities:
+- You never invent information that is not in the provided document.
+- You enforce precision, accuracy, and discipline in all questions.
+- You generate challenging and thought-provoking questions even for simple topics.
+- You avoid vague, overly easy, or repetitive questions.
+- You maintain a formal, academic tone at all times.
+- You ensure every question is answerable directly from the document.
+- You do not provide hints or commentary unless required by the output format.
+
+Generate a quiz based ONLY on the provided text.
 
 Topic/Chapter Focus: ${topic || "General Review"}
 Difficulty Level: ${difficulty || "Medium"}
@@ -31,95 +54,114 @@ DOCUMENT TEXT:
 ${documentText.slice(0, 15000)}
 
 CRITICAL INSTRUCTIONS:
-- Generate EXACTLY ${numQuestions || 5} questions
-- Questions must be based ONLY on the document text provided above
-- You MUST respond with ONLY a valid JSON array, no markdown formatting, no preamble, no explanation
-- Do NOT wrap your response in \`\`\`json or \`\`\` code blocks
-- Start directly with [ and end with ]
+- Generate EXACTLY ${numQuestions || 5} questions.
+- All questions must be based ONLY on the document text provided above.
+- You MUST respond with ONLY a valid JSON array.
+- No markdown formatting.
+- No code blocks.
+- No extra text, no explanations outside the JSON.
+- Output must begin with '[' and end with ']'.
 
 OUTPUT FORMAT (respond with ONLY this structure):
 [
   {
     "question": "Question text here?",
-    "options": ["Option A", "Option B", "Option C", "Option D"], 
+    "options": ["Option A", "Option B", "Option C", "Option D"],
     "correct_answer": "Option A",
-    "explanation": "Why this is correct."
+    "explanation": "Short explanation of why this is correct."
   }
 ]
 
-Now generate the quiz in the exact JSON format specified above:`;
+Now generate the quiz in the exact JSON format specified above:
+`;
 
-    // 3. Generate Content (Non-Streaming)
-    const model = genAI.getGenerativeModel({ 
+
+    // 3. Call Gemini
+    const model = genAI.getGenerativeModel({
       model: "gemini-2.5-flash",
     });
-    
+
     console.log("🔄 Calling Gemini API for quiz generation...");
-    
-    // Use generateContent with the prompt
+
     const result = await model.generateContent(prompt);
     const text = result.response.text();
-    
+
     console.log("📦 Raw AI response (first 200 chars):", text.substring(0, 200));
 
-    // 4. Clean and Parse JSON
+    // 4. Clean JSON
     let cleanedText = text.trim();
-    
-    // Remove markdown code blocks if present
-    cleanedText = cleanedText.replace(/```json\s*/g, '').replace(/```\s*/g, '');
-    
-    // Remove any text before the first [ and after the last ]
-    const firstBracket = cleanedText.indexOf('[');
-    const lastBracket = cleanedText.lastIndexOf(']');
-    
-    if (firstBracket === -1 || lastBracket === -1) {
-      console.error("❌ No JSON array found in response");
-      return NextResponse.json({ 
-        error: "AI did not return valid JSON array.", 
-        raw_output: text 
-      }, { status: 500 });
-    }
-    
-    cleanedText = cleanedText.substring(firstBracket, lastBracket + 1);
-    
-    console.log("🧹 Cleaned JSON (first 200 chars):", cleanedText.substring(0, 200));
+    cleanedText = cleanedText
+      .replace(/```json\s*/g, "")
+      .replace(/```\s*/g, "");
 
+    const firstBracket = cleanedText.indexOf("[");
+    const lastBracket = cleanedText.lastIndexOf("]");
+
+    if (firstBracket === -1 || lastBracket === -1) {
+      console.error("❌ No JSON array found");
+      return NextResponse.json(
+        {
+          error: "AI did not return valid JSON array.",
+          raw_output: text,
+        },
+        { status: 500 }
+      );
+    }
+
+    cleanedText = cleanedText.substring(firstBracket, lastBracket + 1);
+
+    console.log(
+      "🧹 Cleaned JSON (first 200 chars):",
+      cleanedText.substring(0, 200)
+    );
+
+    // 5. Parse and validate quiz output
     try {
       const quizData = JSON.parse(cleanedText);
-      
-      // Validate structure
+
       if (!Array.isArray(quizData) || quizData.length === 0) {
         throw new Error("Quiz data is not a valid array or is empty");
       }
-      
-      // Validate each question has required fields
+
       for (let i = 0; i < quizData.length; i++) {
         const q = quizData[i];
         if (!q.question || !q.options || !q.correct_answer) {
           throw new Error(`Question ${i + 1} is missing required fields`);
         }
       }
-      
-      console.log("✅ Quiz generated successfully:", quizData.length, "questions");
+
+      console.log("✅ Quiz generated:", quizData.length, "questions");
+
       return NextResponse.json({ quiz: quizData });
-      
     } catch (e: any) {
       console.error("❌ JSON Parsing Failed:", e.message);
-      console.error("Attempted to parse:", cleanedText);
-      
-      // Return detailed error for debugging
-      return NextResponse.json({ 
-        error: "AI returned malformed JSON.", 
-        parse_error: e.message,
-        raw_output: text,
-        cleaned_output: cleanedText
-      }, { status: 500 });
-    }
 
+      return NextResponse.json(
+        {
+          error: "AI returned malformed JSON.",
+          parse_error: e.message,
+          raw_output: text,
+          cleaned_output: cleanedText,
+        },
+        { status: 500 }
+      );
+    }
   } catch (error: any) {
     console.error("❌ Quiz Generation Error:", error);
-    return NextResponse.json({ 
-      error: error.message || "Unknown error occurred" 
-    }, { status: 500 });
+
+    // Zod error handler
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { error: "Invalid input", details: error.issues },
+        { status: 400 }
+      );
+    }
+
+    return NextResponse.json(
+      {
+        error: error.message || "Unknown error",
+      },
+      { status: 500 }
+    );
   }
 }

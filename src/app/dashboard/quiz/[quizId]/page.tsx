@@ -2,11 +2,14 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useParams, useRouter } from 'next/navigation';
+import { getRouteParam } from '@/lib/route-utils';
 
 export default function QuizPage() {
   const params = useParams();
-  const quizId = params?.quizId as string; 
   const router = useRouter();
+
+  // ✅ FIXED: Safe parameter extraction
+  const quizId = getRouteParam(params, 'quizId');
 
   console.log('🔍 Quiz params:', params);
   console.log('🔍 Quiz ID:', quizId);
@@ -21,85 +24,107 @@ export default function QuizPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [hasAttempted, setHasAttempted] = useState(false);
   const [previousScore, setPreviousScore] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
   
   // --- ACCESS STATE ---
   const [hasAccess, setHasAccess] = useState(false);
 
   useEffect(() => {
-    const fetchQuiz = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return router.push('/login');
-      
-      setUserId(user.id);
-
-      // Get user role
-      const { data: profile } = await supabase
-        .from('users')
-        .select('role')
-        .eq('id', user.id)
-        .single();
-      
-      setRole(profile?.role);
-
-      // Fetch quiz and questions
-      const { data: quizData, error: quizError } = await supabase
-        .from('quizzes')
-        .select('*, courses(classes(users(plan_tier)))') // Fetch nested plan info
-        .eq('id', quizId)
-        .single();
-
-      console.log('📝 Quiz data:', { quizData, quizError });
-
-      const { data: questionsData, error: questionsError } = await supabase
-        .from('questions')
-        .select('*')
-        .eq('quiz_id', quizId)
-        .order('created_at', { ascending: true });
-
-      console.log('❓ Questions data:', { questionsData, questionsError, count: questionsData?.length });
-
-      setQuiz(quizData);
-      setQuestions(questionsData || []);
-
-      // Check if student has already attempted this quiz
-      if (profile?.role === 'student') {
-        const { data: existingResult } = await supabase
-          .from('quiz_results')
-          .select('score')
-          .eq('quiz_id', quizId)
-          .eq('student_id', user.id)
-          .single();
-
-        if (existingResult) {
-          setHasAttempted(true);
-          setPreviousScore(existingResult.score);
-        }
-        
-        // CHECK ACCESS
-        // Logic: If owner is cohort_manager, check DB. Else free.
-        const ownerPlan = quizData?.courses?.classes?.users?.plan_tier;
-        
-        if (ownerPlan === 'cohort_manager') {
-            const { data: access } = await supabase
-                .from('student_course_access')
-                .select('id')
-                .eq('student_id', user.id)
-                .eq('course_id', quizData.course_id)
-                .maybeSingle();
-            setHasAccess(!!access);
-        } else {
-            setHasAccess(true);
-        }
-
-      } else {
-          setHasAccess(true); // Lecturers always have access
-      }
-
+    // ✅ FIXED: Validate quiz ID before proceeding
+    if (!quizId) {
+      setError('Invalid quiz ID');
       setLoading(false);
-    };
+      return;
+    }
 
     fetchQuiz();
   }, [quizId, router]);
+
+  const fetchQuiz = async () => {
+    // ✅ FIXED: Double-check quizId exists
+    if (!quizId) return;
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return router.push('/login');
+    
+    setUserId(user.id);
+
+    // Get user role
+    const { data: profile } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+    
+    setRole(profile?.role);
+
+    // Fetch quiz and questions
+    const { data: quizData, error: quizError } = await supabase
+      .from('quizzes')
+      .select('*, courses(classes(users(plan_tier)))') // Fetch nested plan info
+      .eq('id', quizId)
+      .single();
+
+    console.log('📝 Quiz data:', { quizData, quizError });
+
+    if (quizError) {
+      console.error('Quiz fetch error:', quizError);
+      setError('Quiz not found');
+      setLoading(false);
+      return;
+    }
+
+    const { data: questionsData, error: questionsError } = await supabase
+      .from('questions')
+      .select('*')
+      .eq('quiz_id', quizId)
+      .order('created_at', { ascending: true });
+
+    console.log('❓ Questions data:', { questionsData, questionsError, count: questionsData?.length });
+
+    if (questionsError) {
+      console.error('Questions fetch error:', questionsError);
+    }
+
+    setQuiz(quizData);
+    setQuestions(questionsData || []);
+
+    // Check if student has already attempted this quiz
+    if (profile?.role === 'student') {
+      const { data: existingResult } = await supabase
+        .from('quiz_results')
+        .select('score')
+        .eq('quiz_id', quizId)
+        .eq('student_id', user.id)
+        .single();
+
+      if (existingResult) {
+        setHasAttempted(true);
+        setPreviousScore(existingResult.score);
+      }
+      
+      // CHECK ACCESS
+      // Logic: If owner is cohort_manager, check DB. Else free.
+      const ownerPlan = quizData?.courses?.classes?.users?.plan_tier;
+      
+      if (ownerPlan === 'cohort_manager') {
+        const { data: access } = await supabase
+          .from('student_course_access')
+          .select('id')
+          .eq('student_id', user.id)
+          .eq('course_id', quizData.course_id)
+          .maybeSingle();
+        setHasAccess(!!access);
+      } else {
+        setHasAccess(true);
+      }
+
+    } else {
+      setHasAccess(true); // Lecturers always have access
+    }
+
+    setLoading(false);
+  };
 
   const handleSubmit = async () => {
     if (role === 'lecturer') {
@@ -141,23 +166,46 @@ export default function QuizPage() {
     }
   };
 
-  // --- PAYMENT HANDLER (For Quiz Page Modal) ---
+  // --- PAYMENT HANDLER (Placeholder) ---
   const handleUnlockResults = async () => {
-      if(confirm(`Unlock Results for ₵15? (Simulated)`)) {
-          const { error } = await supabase.from('student_course_access').insert({
-              student_id: userId,
-              course_id: quiz.course_id,
-              access_type: 'trial'
-          });
-          
-          if (error) {
-              alert("Error: " + error.message);
-          } else {
-              alert("Unlocked!");
-              setHasAccess(true);
-          }
+    if(confirm(`Unlock Results for ₵15? (Simulated)`)) {
+      const { error } = await supabase.from('student_course_access').insert({
+        student_id: userId,
+        course_id: quiz.course_id,
+        access_type: 'trial'
+      });
+      
+      if (error) {
+        alert("Error: " + error.message);
+      } else {
+        alert("Unlocked!");
+        setHasAccess(true);
       }
+    }
   };
+
+  // ✅ FIXED: Error state rendering
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-8">
+        <div className="mx-auto max-w-2xl">
+          <div className="bg-white rounded-xl shadow-lg p-8 text-center border border-red-200">
+            <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6">
+              <span className="text-4xl">⚠️</span>
+            </div>
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">Error Loading Quiz</h1>
+            <p className="text-gray-600 mb-6">{error}</p>
+            <button 
+              onClick={() => router.back()}
+              className="px-6 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700"
+            >
+              ← Go Back
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) return <div className="p-10 text-center">Loading Quiz...</div>;
 
@@ -229,46 +277,45 @@ export default function QuizPage() {
 
   // STUDENT VIEW - Already attempted OR Submitted
   if (hasAttempted || submitted) {
-      
     // 🔒 LOCKED VIEW (No Payment)
     if (!hasAccess) {
-        return (
-          <div className="min-h-screen bg-gray-50 p-8">
-            <div className="mx-auto max-w-2xl">
-              <div className="bg-white rounded-xl shadow-lg p-8 text-center border border-orange-200">
-                <div className="w-20 h-20 bg-orange-50 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <span className="text-4xl">🔒</span>
-                </div>
-                <h1 className="text-2xl font-bold text-gray-900 mb-2">Quiz Submitted!</h1>
-                <p className="text-gray-500 mb-6">
-                  Your answers have been recorded and sent to your lecturer.
-                </p>
-                
-                <div className="bg-gray-50 p-6 rounded-xl mb-6 relative overflow-hidden group cursor-pointer" onClick={handleUnlockResults}>
-                  <div className="filter blur-sm select-none opacity-50 transition duration-300 group-hover:opacity-40">
-                    <p className="text-sm text-gray-400 font-bold mb-2">Your Score</p>
-                    <p className="text-4xl font-bold text-gray-800">85%</p>
-                    <p className="mt-2 text-gray-500">Great job! You mastered the concepts of...</p>
-                  </div>
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="bg-white/90 p-4 rounded-lg shadow-lg text-center transform transition hover:scale-105">
-                      <p className="font-bold text-gray-800 mb-2 text-sm">Score Hidden</p>
-                      <button 
-                        className="px-6 py-2 bg-blue-600 text-white text-sm font-bold rounded-lg hover:bg-blue-700 shadow-lg"
-                      >
-                        Unlock Results (₵15)
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                
-                <button onClick={() => router.push(`/dashboard/courses/${quiz.course_id}`)} className="text-gray-500 text-sm hover:text-gray-800 font-medium">
-                    ← Back to Course
-                </button>
+      return (
+        <div className="min-h-screen bg-gray-50 p-8">
+          <div className="mx-auto max-w-2xl">
+            <div className="bg-white rounded-xl shadow-lg p-8 text-center border border-orange-200">
+              <div className="w-20 h-20 bg-orange-50 rounded-full flex items-center justify-center mx-auto mb-6">
+                <span className="text-4xl">🔒</span>
               </div>
+              <h1 className="text-2xl font-bold text-gray-900 mb-2">Quiz Submitted!</h1>
+              <p className="text-gray-500 mb-6">
+                Your answers have been recorded and sent to your lecturer.
+              </p>
+              
+              <div className="bg-gray-50 p-6 rounded-xl mb-6 relative overflow-hidden group cursor-pointer" onClick={handleUnlockResults}>
+                <div className="filter blur-sm select-none opacity-50 transition duration-300 group-hover:opacity-40">
+                  <p className="text-sm text-gray-400 font-bold mb-2">Your Score</p>
+                  <p className="text-4xl font-bold text-gray-800">85%</p>
+                  <p className="mt-2 text-gray-500">Great job! You mastered the concepts of...</p>
+                </div>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="bg-white/90 p-4 rounded-lg shadow-lg text-center transform transition hover:scale-105">
+                    <p className="font-bold text-gray-800 mb-2 text-sm">Score Hidden</p>
+                    <button 
+                      className="px-6 py-2 bg-blue-600 text-white text-sm font-bold rounded-lg hover:bg-blue-700 shadow-lg"
+                    >
+                      Unlock Results (₵15)
+                    </button>
+                  </div>
+                </div>
+              </div>
+              
+              <button onClick={() => router.push(`/dashboard/courses/${quiz.course_id}`)} className="text-gray-500 text-sm hover:text-gray-800 font-medium">
+                ← Back to Course
+              </button>
             </div>
           </div>
-        );
+        </div>
+      );
     }
 
     // ✅ UNLOCKED VIEW (Paid)

@@ -6,7 +6,10 @@ import Link from 'next/link';
 
 export default function QuizGradebookPage() {
   const params = useParams();
-  const quizId = params?.quizId as string; // Changed from 'id' to 'quizId'
+  const quizId = Array.isArray(params?.quizId) 
+  ? params.quizId[0] 
+  : params?.quizId;
+if (!quizId) return ;
   const router = useRouter();
 
   const [quiz, setQuiz] = useState<any>(null);

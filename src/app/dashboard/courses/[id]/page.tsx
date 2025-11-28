@@ -151,10 +151,9 @@ export default function EnhancedCoursePage() {
   // --- HELPER: EXTRACT TEXT ---
   const extractTextFromPDF = async (file: File) => {
     try {
-      const pdfjsLib = await import('pdfjs-dist');
-      // ✅ FIX: Use the version matching your package.json (5.4.394)
-      // Using unpkg to fetch the worker file directly
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@5.4.394/build/pdf.worker.min.mjs`;
+     const pdfjsLib = await import('pdfjs-dist');
+// Use local worker file
+pdfjsLib.GlobalWorkerOptions.workerSrc = `/pdf.worker.min.mjs`;
 
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
