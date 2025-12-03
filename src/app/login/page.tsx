@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { supabase } from '../../lib/supabase'; // Keep for SignUp (Client side is fine for signup)
+import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -28,25 +28,30 @@ export default function LoginPage() {
 
     try {
       if (isLogin) {
-        // --- LOGIN (VIA SERVER ROUTE) ---
-        // We use a server route to ensure cookies are set correctly for middleware
-        const res = await fetch('/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password }),
+        console.log('🔐 Attempting login...');
+        
+        // Client-side login - this WILL set cookies automatically
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
         });
 
-        const data = await res.json();
-
-        if (!res.ok) {
-          throw new Error(data.error || 'Login failed');
+        if (error) {
+          console.error('❌ Login error:', error);
+          throw error;
         }
-        
-        // Force a hard refresh to ensure the new session is picked up
-        window.location.href = '/dashboard';
+
+        console.log('✅ Login successful:', data.user.email);
+        console.log('🍪 Session created:', data.session);
+
+        // CRITICAL: Hard navigation to ensure middleware runs with fresh cookies
+        // DO NOT use router.push() - it won't trigger middleware properly
+        setTimeout(() => {
+          window.location.href = '/dashboard';
+        }, 100);
         
       } else {
-        // --- SIGN UP (Client Side is fine) ---
+        // --- SIGN UP ---
         if (!fullName.trim()) throw new Error('Please enter your full name');
         if (role === 'ta' && !taCode.trim()) throw new Error('TA invite code is required');
 
@@ -66,10 +71,11 @@ export default function LoginPage() {
         if (error) throw error;
         alert('Success! Check your email to verify account.');
         setIsLogin(true);
+        setLoading(false);
       }
     } catch (err: any) {
+      console.error('💥 Auth error:', err);
       setError(err.message);
-    } finally {
       setLoading(false);
     }
   };
@@ -85,7 +91,7 @@ export default function LoginPage() {
         
         {/* Header */}
         <div className="text-center mb-8">
-          <div className="w-20 h-20 bg-linear-to-trrom-indigo-600 to-violet-600 rounded-3xl mx-auto mb-6 shadow-lg shadow-indigo-200 flex items-center justify-center transform -rotate-3">
+          <div className="w-20 h-20 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-3xl mx-auto mb-6 shadow-lg shadow-indigo-200 flex items-center justify-center transform -rotate-3">
             <span className="text-4xl text-white">🎓</span>
           </div>
           <h1 className="text-3xl font-black text-slate-900 mb-2 tracking-tight">
@@ -190,12 +196,12 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-4 bg-linear-to-r from-indigo-600 to-purple-600 text-white rounded-xl font-bold text-lg shadow-xl shadow-slate-200 hover:bg-slate-800 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-70 disabled:scale-100"
+            className="w-full py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl font-bold text-lg shadow-xl shadow-slate-200 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-70 disabled:scale-100"
           >
             {loading ? (
               <span className="flex items-center justify-center gap-2">
                 <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Processing...
+                {isLogin ? 'Signing in...' : 'Processing...'}
               </span>
             ) : (isLogin ? 'Sign In' : 'Create Account')}
           </button>
@@ -204,7 +210,10 @@ export default function LoginPage() {
         <p className="text-center mt-8 text-slate-500 font-medium text-sm">
           {isLogin ? "Don't have an account?" : "Already have an account?"}
           <button 
-            onClick={() => setIsLogin(!isLogin)} 
+            onClick={() => {
+              setIsLogin(!isLogin);
+              setError('');
+            }} 
             className="text-indigo-600 font-bold ml-2 hover:text-indigo-700 transition"
           >
             {isLogin ? 'Sign Up' : 'Log In'}

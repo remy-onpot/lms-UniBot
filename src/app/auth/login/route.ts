@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     }
   )
 
-  const { error } = await supabase.auth.signInWithPassword({
+  const { data, error } = await supabase.auth.signInWithPassword({
     email,
     password,
   })
@@ -41,5 +41,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 401 })
   }
 
-  return NextResponse.json({ success: true }, { status: 200 })
+  // Return success with session info
+  return NextResponse.json({ 
+    success: true,
+    user: data.user,
+    session: data.session 
+  }, { status: 200 })
 }
