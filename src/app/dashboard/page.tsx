@@ -35,11 +35,31 @@ export default function Dashboard() {
 
   useEffect(() => {
     const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return router.push('/login');
+      // ⚡️ OPTIMIZATION: Use getSession() instead of getUser().
+      // It is instant because it reads the cookie/local storage.
+      // The middleware already verified the user securely on the server.
+      const { data: { session } } = await supabase.auth.getSession();
       
-      const { data: profile } = await supabase.from('users').select('*').eq('id', user.id).single();
-      setUser(user);
+      if (!session) {
+        // Only redirect if absolutely no session exists
+        return router.replace('/login');
+      }
+      
+      const currentUser = session.user;
+      setUser(currentUser);
+      
+      // Fetch profile in parallel if possible, or strict check here
+      const { data: profile, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', currentUser.id)
+        .single();
+
+      if (error || !profile) {
+        console.error("Profile load error:", error);
+        return; // Don't redirect immediately, let the UI handle empty state or retry
+      }
+
       setProfile(profile);
 
       if ((profile?.role === 'lecturer' || profile?.is_course_rep) && !profile?.onboarding_completed) {
@@ -51,7 +71,8 @@ export default function Dashboard() {
 
   const handleLogout = async () => { 
     await supabase.auth.signOut(); 
-    router.push('/login'); 
+    router.refresh(); // Clear server cache
+    router.replace('/login'); 
   };
 
   const handleCreateClass = async (e: React.FormEvent) => {
@@ -78,6 +99,7 @@ export default function Dashboard() {
     });
   };
 
+  // Show Skeleton only if we are truly loading the initial profile
   if (!profile || classesLoading) return <DashboardSkeleton />;
 
   // Filter Logic
@@ -110,7 +132,6 @@ export default function Dashboard() {
             <span className="font-bold text-xl tracking-tight text-slate-900">UniBot</span>
           </div>
           
-          {/* Search Bar - Desktop */}
           <div className="hidden md:flex items-center bg-slate-100 rounded-full px-4 py-2.5 w-96 border border-transparent focus-within:border-slate-300 focus-within:bg-white transition-all">
             <span className="text-slate-400 mr-2">🔍</span>
             <input 
@@ -169,7 +190,6 @@ export default function Dashboard() {
               </div>
             </div>
             
-            {/* Abstract Shapes Background */}
             <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-blue-600/20 rounded-full blur-3xl -mr-20 -mt-20"></div>
             <div className="absolute bottom-0 right-20 w-[300px] h-[300px] bg-purple-600/20 rounded-full blur-3xl -mb-20"></div>
           </div>
@@ -183,7 +203,6 @@ export default function Dashboard() {
               <p className="text-slate-500 text-sm mt-1">Continue where you left off</p>
             </div>
             
-            {/* Category Pills */}
             <div className="flex bg-white p-1 rounded-xl shadow-sm border border-slate-100">
               {['all', 'ongoing', 'completed'].map((filter) => (
                 <button
@@ -211,7 +230,7 @@ export default function Dashboard() {
             ) : (
               filteredClasses.map((cls, i) => {
                 const colors = ['bg-blue-50 text-blue-600', 'bg-purple-50 text-purple-600', 'bg-orange-50 text-orange-600', 'bg-pink-50 text-pink-600'];
-                const colorClass = colors[i % colors.length]; // Rotate colors
+                const colorClass = colors[i % colors.length];
 
                 return (
                   <div 
@@ -262,7 +281,7 @@ export default function Dashboard() {
         <span className="font-bold text-sm">Ask AI</span>
       </Link>
 
-      {/* --- MODALS (Simplified for brevity, logic same as before) --- */}
+      {/* MODALS */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
           <div className="bg-white p-8 rounded-3xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
