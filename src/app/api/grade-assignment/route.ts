@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 import { AppError, handleAPIError } from "@/lib/error-handler";
+import { createClient } from "@/lib/supabase/server"; // ✅ NEW IMPORT
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY || "");
 
@@ -28,6 +29,14 @@ function extractJSON(text: string): any {
 
 export async function POST(req: Request) {
   try {
+    // 1. SECURITY: Initialize Supabase (New Way)
+    const supabase = await createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session) {
+      throw new AppError("Unauthorized: You must be logged in to grade assignments.", 401);
+    }
+
     const { assignmentTitle, assignmentDescription, studentText, maxPoints } = await req.json();
 
     if (!studentText || studentText.trim().length < 20) {
@@ -37,7 +46,7 @@ export async function POST(req: Request) {
       );
     }
 
-    console.log(`📝 Grading: "${assignmentTitle}" | Length: ${studentText.length} chars`);
+    console.log(`📝 Grading for User ${session.user.id}: "${assignmentTitle}" | Length: ${studentText.length} chars`);
 
     const prompt = `
       You are a strict university professor. Grade this student submission based on the instructions.
@@ -71,7 +80,7 @@ export async function POST(req: Request) {
     `;
 
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.0-flash-exp",
       generationConfig: { responseMimeType: "application/json" }
     });
 

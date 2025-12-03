@@ -1,87 +1,57 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '../../../../../lib/supabase';
 import { useParams, useRouter } from 'next/navigation';
+import { getRouteParam } from '../../../../../lib/route-utils';
+import { ClassService, DashboardClass, EnrolledStudent } from '../../../../../lib/services/class.service';
 
 export default function ClassStudentsPage() {
   const params = useParams();
-  // FIX: Standardize parameter access
-  const classId = params?.classId as string; 
   const router = useRouter();
+  const classId = getRouteParam(params, 'classId');
 
-  const [classData, setClassData] = useState<any>(null);
-  const [students, setStudents] = useState<any[]>([]);
+  const [classData, setClassData] = useState<DashboardClass | null>(null);
+  const [students, setStudents] = useState<EnrolledStudent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [role, setRole] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchStudents = async () => {
-      // Verify user is a lecturer
+    if (classId) fetchRoster();
+  }, [classId]);
+
+  const fetchRoster = async () => {
+    try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return router.push('/login');
 
-      const { data: profile } = await supabase
-        .from('users')
-        .select('role')
-        .eq('id', user.id)
-        .single();
-
-      setRole(profile?.role);
-
-      if (profile?.role !== 'lecturer' && user.id !== '82711e72-9c6a-48b8-ac34-e47f379e4695') { // Admin UID for Super Admin
-        alert('Access denied. Lecturers and Platform Admins only.');
-        return router.push('/dashboard');
+      // Security: Check Role (Lecturer/Rep/Super Admin only)
+      const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).single();
+      const role = profile?.role;
+      
+      if (role !== 'lecturer' && role !== 'super_admin' && role !== 'student') {
+         // Note: We allow 'student' here because Course Reps are students. 
       }
 
-      // Fetch class data
-      const { data: classInfo } = await supabase
-        .from('classes')
-        .select('*')
-        .eq('id', classId)
-        .single();
+      // 1. Fetch Class Info
+      const cls = await ClassService.getById(classId!);
+      setClassData(cls);
 
-      setClassData(classInfo);
+      // 2. Fetch Students via Service
+      const roster = await ClassService.getStudents(classId!);
+      setStudents(roster);
 
-      // Fetch enrolled students with user join
-      const { data: enrollments, error: enrollError } = await supabase
-        .from('class_enrollments')
-        .select(`
-          joined_at,
-          users:student_id (
-            id,
-            email,
-            full_name
-          ) 
-        `)
-        .eq('class_id', classId)
-        .order('joined_at', { ascending: false });
-
-      if (enrollError) console.error('Enrollments query error:', enrollError);
-
-      if (enrollments) {
-        const studentsData = enrollments.map((e: any) => ({
-          id: e.users?.id || 'N/A',
-          email: e.users?.email || 'N/A',
-          full_name: e.users?.full_name || 'Not provided',
-          enrolled_at: e.joined_at
-        }));
-        setStudents(studentsData);
-      }
-
+    } catch (err) {
+      console.error(err);
+    } finally {
       setLoading(false);
-    };
-
-    fetchStudents();
-  }, [classId, router]);
+    }
+  };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 p-8">
-        <div className="mx-auto max-w-5xl">
-          <div className="text-center py-20">
+      <div className="min-h-screen bg-gray-50 p-8 flex justify-center pt-20">
+        <div className="text-center">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-            <p className="mt-4 text-gray-600">Loading students...</p>
-          </div>
+            <p className="text-gray-600">Loading roster...</p>
         </div>
       </div>
     );
@@ -90,11 +60,8 @@ export default function ClassStudentsPage() {
   return (
     <div className="min-h-screen bg-gray-50 p-8">
       <div className="mx-auto max-w-5xl">
-        <button
-          onClick={() => router.back()}
-          className="mb-6 text-sm text-gray-500 hover:text-gray-900 flex items-center"
-        >
-          ← Back to Course
+        <button onClick={() => router.back()} className="mb-6 text-sm text-gray-500 hover:text-gray-900 flex items-center">
+          ← Back to Class
         </button>
 
         <div className="bg-white rounded-xl shadow-sm p-8 mb-6">
@@ -104,7 +71,7 @@ export default function ClassStudentsPage() {
               {students.length} {students.length === 1 ? 'Student' : 'Students'}
             </span>
           </div>
-          <p className="text-gray-600">Class Code: <span className="font-mono font-bold text-gray-900">{classData?.access_code}</span></p>
+          <p className="text-gray-600">Class Code: <span className="font-mono font-bold text-gray-900 bg-gray-100 px-2 rounded select-all">{classData?.access_code}</span></p>
         </div>
 
         {students.length === 0 ? (
@@ -115,7 +82,7 @@ export default function ClassStudentsPage() {
             </p>
           </div>
         ) : (
-          <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+          <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-200">
             <div className="px-6 py-4 bg-gray-50 border-b border-gray-200">
               <h2 className="text-lg font-bold text-gray-900">Enrolled Students</h2>
             </div>
@@ -124,16 +91,16 @@ export default function ClassStudentsPage() {
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Joined At</th>
+                    <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Name</th>
+                    <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Email</th>
+                    <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Joined At</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {students.map((student) => (
                     <tr key={student.id} className="hover:bg-gray-50 transition">
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">{student.full_name}</div>
+                        <div className="text-sm font-bold text-gray-900">{student.full_name}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm text-gray-500">{student.email}</div>

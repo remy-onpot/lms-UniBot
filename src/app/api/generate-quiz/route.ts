@@ -2,6 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 import { quizConfigSchema } from "@/lib/validators";
 import { AppError, handleAPIError } from "@/lib/error-handler";
+import { createClient } from "@/lib/supabase/server"; // ✅ NEW IMPORT
 import { z } from "zod";
 
 const genAI = new GoogleGenerativeAI(
@@ -10,16 +11,24 @@ const genAI = new GoogleGenerativeAI(
 
 export async function POST(req: Request) {
   try {
-    // Check API Key
+    // 1. SECURITY: Initialize Supabase (New Way)
+    const supabase = await createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session) {
+      throw new AppError("Unauthorized: You must be logged in to generate quizzes.", 401);
+    }
+
+    // 2. Check API Key
     const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
     if (!apiKey) {
       throw new AppError("Server configuration error: Missing API Key", 500);
     }
 
-    // 1. Parse body
+    // 3. Parse body
     const body = await req.json();
 
-    // 2. Validate with Zod (Zod errors go automatically to handleAPIError)
+    // 4. Validate with Zod
     const validated = quizConfigSchema.parse(body);
 
     const { documentText, topic, difficulty, numQuestions, type } = validated;
@@ -28,14 +37,14 @@ export async function POST(req: Request) {
       throw new AppError("No text provided", 400);
     }
 
-    console.log("📝 Generating quiz with params:", {
+    console.log(`📝 Generating quiz for User ${session.user.id}:`, {
       topic,
       difficulty,
       numQuestions,
       type,
     });
 
-    // 3. Prompt
+    // 5. Prompt
     const prompt = `
 You are a strict, no-nonsense teacher with these qualities:
 - You never invent information that is not in the provided document.
@@ -78,9 +87,9 @@ OUTPUT FORMAT:
 Now generate the quiz in the exact JSON format specified above:
     `;
 
-    // 4. Call Gemini
+    // 6. Call Gemini
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.0-flash-exp",
     });
 
     const result = await model.generateContent(prompt);
@@ -88,7 +97,7 @@ Now generate the quiz in the exact JSON format specified above:
 
     console.log("📦 Raw AI response:", text.substring(0, 200));
 
-    // 5. Extract JSON only
+    // 7. Extract JSON only
     let cleanedText = text
       .trim()
       .replace(/```json/gi, "")
@@ -103,7 +112,7 @@ Now generate the quiz in the exact JSON format specified above:
 
     cleanedText = cleanedText.substring(start, end + 1);
 
-    // 6. Parse JSON
+    // 8. Parse JSON
     let quizData;
     try {
       quizData = JSON.parse(cleanedText);
@@ -111,7 +120,7 @@ Now generate the quiz in the exact JSON format specified above:
       throw new AppError("Malformed JSON returned by the AI.", 500);
     }
 
-    // 7. Validate quiz structure
+    // 9. Validate quiz structure
     if (!Array.isArray(quizData) || quizData.length === 0) {
       throw new AppError("Quiz data is not a valid non-empty array.", 500);
     }
@@ -124,8 +133,6 @@ Now generate the quiz in the exact JSON format specified above:
         );
       }
     });
-
-    console.log("✅ Quiz generated:", quizData.length);
 
     return NextResponse.json({ quiz: quizData });
   } catch (error) {

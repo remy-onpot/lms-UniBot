@@ -1,168 +1,86 @@
 'use client';
-import { useState, useRef, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
-
-// Define Message Type locally
-type Message = {
-  id: string;
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-};
+import { ChatService } from '../../lib/services/chat.service';
+import { useAIChat } from '../../hooks/useAIChat';
+import { ChatWindow } from '../../components/features/chat/ChatWindow';
 
 export default function GlobalAssistantPage() {
   const router = useRouter();
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   
-  const initialMessage = "Hello! I am UniBot, your Global University Assistant. I'm ready to help you navigate the platform and answer general academic questions.";
+  // State
+  const [userId, setUserId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  // --- MANUAL STATE MANAGEMENT ---
-  const [messages, setMessages] = useState<Message[]>([
-    { id: '0', role: 'assistant', content: initialMessage }
-  ]);
-  const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  // Initialize Hook
+  // documentContext is null because this is the global assistant
+  const { messages, setMessages, input, setInput, isLoading, sendMessage } = useAIChat(
+    null, 
+    userId || undefined,
+    sessionId || undefined
+  );
 
-  // Manual Send Handler (Robust fetch logic)
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || isLoading) return;
+  useEffect(() => {
+    initGlobalChat();
+  }, []);
 
-    // A. Add User Message to UI
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: input };
-    setMessages(prev => [...prev, userMsg]);
-    
-    setInput('');
-    setIsLoading(true);
-
+  const initGlobalChat = async () => {
     try {
-      // B. Call API with ALL messages (including the new user message)
-      console.log("🚀 Sending to API:", [...messages, userMsg]);
-      
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [...messages, userMsg], // Send complete history with IDs
-          documentContext: null 
-        }),
-      });
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return router.push('/login');
+      setUserId(user.id);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Unknown API Error');
-      }
-      
-      if (!response.body) return;
+      // Check for an existing "General" session (one without a material_id)
+      const sessions = await ChatService.getUserSessions(user.id);
+      const generalSession = sessions.find(s => !s.material_id); 
 
-      // C. Prepare AI Message UI
-      const aiMsgId = (Date.now() + 1).toString();
-      setMessages(prev => [...prev, { id: aiMsgId, role: 'assistant', content: '' }]);
+      if (generalSession) {
+        setSessionId(generalSession.id);
+        const history = await ChatService.getSessionMessages(generalSession.id);
+        setMessages(history);
+      } 
+      // If no session exists, the hook will create one automatically on the first message
 
-      // D. Read the Stream manually
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let done = false;
-      let accumulatedText = ''; // Accumulate all chunks here
-
-      while (!done) {
-        const { value, done: doneReading } = await reader.read();
-        done = doneReading;
-        
-        if (value) {
-          const chunkValue = decoder.decode(value, { stream: true });
-          accumulatedText += chunkValue; // Add to accumulated text
-          
-          console.log('📦 Frontend received chunk:', chunkValue.substring(0, 50));
-
-          // Update AI message with accumulated text (not appending chunk again)
-          setMessages((prev: Message[]) => {
-            const newMessages = [...prev];
-            const targetIndex = newMessages.findIndex(msg => msg.id === aiMsgId);
-            if (targetIndex !== -1) {
-              // Set the FULL accumulated text, don't append
-              newMessages[targetIndex].content = accumulatedText;
-            }
-            return newMessages;
-          });
-        }
-      }
-      
-      console.log('✅ Frontend stream complete. Total text length:', accumulatedText.length);
-
-    } catch (error: any) {
-      console.error("Chat error:", error);
-      setMessages(prev => [...prev, { 
-        id: Date.now().toString(), 
-        role: 'system', 
-        content: `❌ Error: ${error.message || "Failed to send message."}` 
-      }]);
+    } catch (error) {
+      console.error("Failed to load chat:", error);
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
-  // Auto-scroll
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-  
+  if (loading) return (
+    <div className="flex h-screen items-center justify-center bg-gray-50">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+    </div>
+  );
+
   return (
-    <div className="flex h-screen flex-col bg-gray-50 pt-20">
+    <div className="flex flex-col h-screen bg-gray-50">
       
-      {/* Top Header */}
-      <div className="bg-white shadow-md border-b border-gray-200 sticky top-0 w-full z-10 pt-16 md:pt-0">
-        <div className="mx-auto max-w-4xl px-4 py-3">
-            <h1 className="text-xl font-bold text-gray-800">
-                🌐 Global Assistant Chat
+      {/* Header */}
+      <div className="bg-white shadow-sm border-b border-gray-200 sticky top-0 w-full z-10 px-4 py-3 flex justify-between items-center">
+        <div>
+            <h1 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                🤖 UniBot Global Assistant
             </h1>
-            <p className="text-sm text-gray-500">Ask general questions about the platform.</p>
+            <p className="text-xs text-gray-500">Ask general questions about your studies.</p>
         </div>
+        <button onClick={() => router.back()} className="text-sm font-medium text-gray-500 hover:text-gray-900">
+            Close
+        </button>
       </div>
 
-      {/* RIGHT PANEL: CHAT */}
-      <div className="flex flex-1 flex-col bg-white">
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 pt-24 md:pt-4">
-          
-          {/* Messages List */}
-          {messages.map((m: Message) => (
-            <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[80%] rounded-2xl px-4 py-3 shadow-sm text-sm ${
-                  m.role === 'user' 
-                    ? 'bg-blue-600 text-white rounded-br-none' 
-                    : m.role === 'system' ? 'bg-red-50 text-red-600 border border-red-100' // System error style
-                    : 'bg-gray-100 text-gray-800 rounded-bl-none'
-              }`}>
-                {m.content}
-              </div>
-            </div>
-          ))}
-          
-          {isLoading && (
-             <div className="flex justify-start">
-               <div className="bg-gray-100 rounded-2xl rounded-bl-none px-4 py-3 text-xs text-gray-500 animate-pulse">Thinking...</div>
-             </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Input Area */}
-        <div className="border-t border-gray-200 p-4">
-          <form onSubmit={handleSend} className="flex gap-2">
-            <input
-              value={input} 
-              onChange={(e) => setInput(e.target.value)} 
-              placeholder="Type your question here..."
-              className="flex-1 rounded-lg border border-gray-300 p-3 text-sm text-gray-900 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 placeholder-gray-400"
-            />
-            <button 
-              type="submit" 
-              disabled={isLoading || !input.trim()} 
-              className="rounded-lg bg-blue-600 px-6 py-2 font-bold text-white hover:bg-blue-700 disabled:bg-gray-300"
-            >
-              Send
-            </button>
-          </form>
-        </div>
+      {/* Reused Chat Window Component */}
+      <div className="flex-1 overflow-hidden relative">
+        <ChatWindow 
+            messages={messages}
+            input={input}
+            isLoading={isLoading}
+            onInputChange={setInput}
+            onSend={(e) => { e.preventDefault(); sendMessage(input); }}
+        />
       </div>
     </div>
   );
