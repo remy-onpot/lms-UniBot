@@ -39,3 +39,24 @@ export const PLANS = {
     maxClasses: Infinity,
   },
 } as const;
+
+export const PRICING = {
+  SINGLE_COURSE: 15,
+  SEMESTER_BUNDLE: 50,
+  BUNDLE_DISCOUNT: 0.3, // 30%
+  QUIZ_RESULTS_UNLOCK: 15,
+} as const;
+
+export const THEME = {
+  COLORS: {
+    primary: 'blue-600',
+    secondary: 'purple-600',
+    success: 'green-600',
+    danger: 'red-600',
+  },
+  BORDER_RADIUS: {
+    card: 'rounded-2xl',
+    button: 'rounded-xl',
+    input: 'rounded-lg',
+  },
+} as const;

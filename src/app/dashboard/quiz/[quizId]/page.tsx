@@ -1,94 +1,115 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase'; // Auth only
+import { supabase } from '../../../../lib/supabase';
 import { useParams, useRouter } from 'next/navigation';
-import { getRouteParam } from '@/lib/route-utils';
-import { QuizService } from '@/lib/services/quiz.service';
-import { Quiz, Question } from '@/types';
-import { QuizLecturerView } from '@/components/features/quiz/QuizLecturerView';
-import { QuizPlayer } from '@/components/features/quiz/QuizPlayer';
-import { QuizResultView } from '@/components/features/quiz/QuizResultView';
+import { getRouteParam } from '../../../../lib/route-utils';
+import { PRICING } from '@/lib/constants';
+import { logger } from '@/lib/logger';
+import dynamic from 'next/dynamic';
+
+// ✅ Dynamic Imports
+const QuizLecturerView = dynamic(() => import('../../../../components/features/quiz/QuizLecturerView').then(mod => mod.QuizLecturerView), {
+  loading: () => <div className="p-10 text-center text-gray-400">Loading Lecturer View...</div>
+});
+const QuizPlayer = dynamic(() => import('../../../../components/features/quiz/QuizPlayer').then(mod => mod.QuizPlayer), {
+  ssr: false, // Player is interactive, no need for SSR
+  loading: () => <div className="p-10 text-center text-gray-400">Loading Quiz Player...</div>
+});
+const QuizResultView = dynamic(() => import('../../../../components/features/quiz/QuizResultView').then(mod => mod.QuizResultView), {
+  loading: () => <div className="p-10 text-center text-gray-400">Loading Results...</div>
+});
 
 export default function QuizPage() {
   const params = useParams();
   const router = useRouter();
   const quizId = getRouteParam(params, 'quizId');
 
-  // --- STATE ---
-  const [quiz, setQuiz] = useState<Quiz | null>(null);
-  const [questions, setQuestions] = useState<Question[]>([]);
+  const [quiz, setQuiz] = useState<any>(null);
+  const [questions, setQuestions] = useState<any[]>([]);
   const [answers, setAnswers] = useState<{ [key: string]: string }>({});
-  
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  
-  // User Context
-  const [role, setRole] = useState<string | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
-  
-  // Student State
   const [submitted, setSubmitted] = useState(false);
   const [score, setScore] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [role, setRole] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [hasAttempted, setHasAttempted] = useState(false);
   const [previousScore, setPreviousScore] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [hasAccess, setHasAccess] = useState(false);
 
   useEffect(() => {
-    if (quizId) initQuiz();
-  }, [quizId]);
-
-  const initQuiz = async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return router.push('/login');
-      setUserId(user.id);
-
-      const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).single();
-      setRole(profile?.role || 'student');
-
-      // 1. Fetch Quiz & Questions via Service
-      const quizData = await QuizService.getById(quizId!);
-      setQuiz(quizData);
-      
-      const questionsData = await QuizService.getQuestions(quizId!);
-      setQuestions(questionsData);
-
-      // 2. Student Logic
-      if (profile?.role === 'student') {
-        // Check previous attempt
-        const result = await QuizService.getUserResult(quizId!, user.id);
-        if (result) {
-          setHasAttempted(true);
-          setPreviousScore(result.score);
-        }
-
-        // Check Paywall Access
-        // Logic: If owner is 'cohort_manager' (Rep), check database. Otherwise free.
-        // @ts-ignore
-        const ownerPlan = quizData?.courses?.classes?.users?.plan_tier;
-        
-        if (ownerPlan === 'cohort_manager') {
-          const hasPaid = await QuizService.checkAccess(user.id, quizData.course_id);
-          setHasAccess(hasPaid);
-        } else {
-          setHasAccess(true); // Free for standard lecturers
-        }
-      } else {
-        setHasAccess(true); // Lecturers/Admins always have access
-      }
-
-    } catch (err: any) {
-      console.error(err);
-      setError("Failed to load quiz.");
-    } finally {
+    if (!quizId) {
+      setError('Invalid quiz ID');
       setLoading(false);
+      return;
     }
+    fetchQuiz();
+  }, [quizId, router]);
+
+  const fetchQuiz = async () => {
+    if (!quizId) return;
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return router.push('/login');
+    setUserId(user.id);
+
+    const { data: profile } = await supabase.from('users').select('role').eq('id', user.id).single();
+    setRole(profile?.role);
+
+    const { data: quizData, error: quizError } = await supabase
+      .from('quizzes')
+      .select('*, courses(classes(users(plan_tier)))')
+      .eq('id', quizId)
+      .single();
+
+    if (quizError) {
+      logger.error('Quiz fetch error:', quizError);
+      setError('Quiz not found');
+      setLoading(false);
+      return;
+    }
+
+    const { data: questionsData, error: questionsError } = await supabase
+      .from('questions')
+      .select('*')
+      .eq('quiz_id', quizId)
+      .order('created_at', { ascending: true });
+
+    if (questionsError) logger.error('Questions fetch error:', questionsError);
+
+    setQuiz(quizData);
+    setQuestions(questionsData || []);
+
+    if (profile?.role === 'student') {
+      const { data: existingResult } = await supabase
+        .from('quiz_results')
+        .select('score')
+        .eq('quiz_id', quizId)
+        .eq('student_id', user.id)
+        .single();
+
+      if (existingResult) {
+        setHasAttempted(true);
+        setPreviousScore(existingResult.score);
+      }
+      
+      const ownerPlan = quizData?.courses?.classes?.users?.plan_tier;
+      if (ownerPlan === 'cohort_manager') {
+        const { data: access } = await supabase.from('student_course_access').select('id').eq('student_id', user.id).eq('course_id', quizData.course_id).maybeSingle();
+        setHasAccess(!!access);
+      } else {
+        setHasAccess(true);
+      }
+    } else {
+      setHasAccess(true);
+    }
+
+    setLoading(false);
   };
 
   const handleSubmit = async () => {
-    if (role === 'lecturer') return alert('Lecturers cannot submit!');
-    if (hasAttempted) return alert('Already completed!');
-    if (!quiz || !userId) return;
+    if (role === 'lecturer') return alert('Lecturers cannot submit quiz answers!');
+    if (hasAttempted) return alert('You have already completed this quiz!');
 
     let correctCount = 0;
     questions.forEach((q) => {
@@ -100,40 +121,75 @@ export default function QuizPage() {
     setSubmitted(true);
 
     try {
-      await QuizService.submitAttempt(quiz.id, userId, finalScore, questions.length, correctCount);
-    } catch (err: any) {
-      alert("Error saving score: " + err.message);
+      const { error } = await supabase.from('quiz_results').insert([{
+        quiz_id: quizId,
+        student_id: userId,
+        score: finalScore,
+        total_questions: questions.length,
+        correct_answers: correctCount
+      }]);
+
+      if (error) {
+        logger.error('Error saving result:', error);
+        alert('Error saving your score: ' + error.message);
+      }
+    } catch (error: any) {
+      logger.error('Error:', error);
+      alert('Failed to save score');
     }
   };
 
   const handleUnlockResults = async () => {
-    if(!quiz || !userId) return;
-    if(confirm(`Unlock Results for ₵15? (Simulated)`)) {
-      try {
-        await QuizService.unlockResults(userId, quiz.course_id);
-        setHasAccess(true);
+    if(confirm(`Unlock Results for ₵${PRICING.QUIZ_RESULTS_UNLOCK}? (Simulated)`)) {
+      const { error } = await supabase.from('student_course_access').insert({
+        student_id: userId,
+        course_id: quiz.course_id,
+        access_type: 'trial'
+      });
+      
+      if (error) alert("Error: " + error.message);
+      else {
         alert("Unlocked!");
-      } catch (err: any) {
-        alert("Payment Error: " + err.message);
+        setHasAccess(true);
       }
     }
   };
 
-  if (error) return <div className="p-10 text-center text-red-500 font-bold">{error}</div>;
-  if (loading || !quiz) return <div className="p-10 text-center">Loading Quiz...</div>;
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-8">
+        <div className="mx-auto max-w-2xl">
+          <div className="bg-white rounded-xl shadow-lg p-8 text-center border border-red-200">
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">Error</h1>
+            <p className="text-gray-600 mb-6">{error}</p>
+            <button onClick={() => router.back()} className="px-6 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700">← Back</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) return <div className="p-10 text-center">Loading Quiz...</div>;
 
   // 1. LECTURER VIEW
   if (role === 'lecturer') {
     return <QuizLecturerView quiz={quiz} questions={questions} onBack={() => router.back()} />;
   }
 
-  // 2. RESULTS VIEW (Already attempted or just submitted)
+  // 2. RESULTS VIEW
   if (hasAttempted || submitted) {
     const displayScore = submitted ? score : (previousScore || 0);
-    return <QuizResultView score={displayScore} hasAccess={hasAccess} courseId={quiz.course_id} onUnlock={handleUnlockResults} />;
+    return (
+        <QuizResultView 
+            score={displayScore} 
+            hasAccess={hasAccess} 
+            courseId={quiz.course_id} 
+            onUnlock={handleUnlockResults} 
+        />
+    );
   }
 
-  // 3. STUDENT PLAYER VIEW
+  // 3. PLAYER VIEW
   return (
     <QuizPlayer 
       quiz={quiz} 

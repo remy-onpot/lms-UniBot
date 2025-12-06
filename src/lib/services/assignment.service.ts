@@ -1,6 +1,6 @@
-import { supabase } from '@/lib/supabase';
-import { extractTextFromPDF } from '@/lib/utils/pdf-utils';
-import { AssignmentSubmission } from '@/types';
+import { supabase } from '../supabase'; 
+import { extractTextFromPDF } from '../utils/pdf-utils'; 
+import { AssignmentSubmission } from '../../types'; 
 
 export const AssignmentService = {
 
@@ -45,9 +45,6 @@ export const AssignmentService = {
 
     // C. Upload File
     const cleanName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-    // Using a folder structure: course_id/assignments/user_id/timestamp_filename
-    // Note: We don't have courseId passed here easily, so we use a general structure or pass it.
-    // Ideally, pass courseId. For now, we use a generic path or the one you used before.
     const path = `assignments/${userId}/${Date.now()}_${cleanName}`;
     
     const { error: uploadError } = await supabase.storage
@@ -78,7 +75,6 @@ export const AssignmentService = {
            aiResult = await res.json();
        } else {
            console.error("AI Grading failed");
-           // Fail gracefully, allow submission but mark feedback as pending
        }
     } else {
         aiResult.feedback = "Could not read document text (Scanned PDF?). Waiting for lecturer review.";

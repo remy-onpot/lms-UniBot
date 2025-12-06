@@ -9,12 +9,23 @@ export interface UserProfile {
   is_course_rep: boolean;
   plan_tier: PlanTier;
   university_id?: string;
+  onboarding_completed?: boolean;
+  
+  // ✅ Gamification Fields
+  xp: number;
+  gems: number;
+  current_streak: number;
+  longest_streak: number;
+  streak_freezes: number;
+  last_activity_date?: string;
+  last_login_date?: string;
 }
 
 export interface Class {
   id: string;
   name: string;
   lecturer_id: string;
+  access_code: string;
   users?: {
     plan_tier: PlanTier;
   };
@@ -138,4 +149,30 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   created_at: string;
+}
+
+export interface AIGeneratedQuestion {
+  question: string;
+  options: string[];
+  correct_answer: string;
+  explanation: string;
+}
+
+export interface AIGradedResponse {
+  score: number;
+  is_ai_generated: boolean;
+  feedback: string;
+  breakdown: {
+    reasoning: string;
+    strengths: string[];
+    weaknesses: string[];
+  };
+}
+
+export interface StreakUpdate {
+  newStreak: number;
+  xpGained: number;
+  usedFreeze?: boolean;
+  earnedFreeze?: boolean;
+  earnedGems?: number;
 }

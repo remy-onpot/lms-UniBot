@@ -1,6 +1,8 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import { PRICING, PLANS } from '@/lib/constants';
+import { Button } from '@/components/ui/Button'; // ✅ Import Button
 
 interface WizardProps {
   userId: string;
@@ -11,6 +13,14 @@ interface WizardProps {
 
 export default function OnboardingWizard({ userId, role, isCourseRep, onComplete }: WizardProps) {
   const [step, setStep] = useState(1);
+  const inputRef = useRef<HTMLInputElement>(null);
+  
+  // Focus handling
+  useEffect(() => {
+    if (step === 1 && inputRef.current) {
+       setTimeout(() => inputRef.current?.focus(), 100);
+    }
+  }, [step]);
   
   // Lecturer Data
   const [lecturerData, setLecturerData] = useState({
@@ -31,20 +41,20 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
   const [loading, setLoading] = useState(false);
 
   const tiers = {
-    starter: { name: 'Starter', price: 0, limit: '50 Students' },
-    pro: { name: 'Professional', price: 300, limit: '500 Students' },
-    elite: { name: 'Elite', price: 600, limit: 'Unlimited' }
+    starter: { name: PLANS.starter.name, price: PLANS.starter.price, limit: `${PLANS.starter.maxStudents} Students` },
+    pro: { name: PLANS.pro.name, price: PLANS.pro.price, limit: `${PLANS.pro.maxStudents} Students` },
+    elite: { name: PLANS.elite.name, price: PLANS.elite.price, limit: 'Unlimited' }
   };
 
   // --- DYNAMIC PRICING HELPERS ---
   const calculateBundlePrice = (count: number) => {
-    const basePrice = count * 15;
-    const discounted = basePrice * 0.7; // 30% Discount
+    const basePrice = count * PRICING.SINGLE_COURSE;
+    const discounted = basePrice * (1 - PRICING.BUNDLE_DISCOUNT); 
     return Math.round(discounted); 
   };
 
   const calculateSavings = (count: number) => {
-    const base = count * 15;
+    const base = count * PRICING.SINGLE_COURSE;
     const bundle = calculateBundlePrice(count);
     return base - bundle;
   };
@@ -133,13 +143,12 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
   };
 
   // --- RENDER ---
-  // (Render code remains exactly the same as the previous step)
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-300">
         
         <div className="bg-blue-600 p-6 text-white text-center">
-          <h2 className="text-2xl font-bold">
+          <h2 id="wizard-title" className="text-2xl font-bold">
             {isCourseRep ? "Setup Class Cohort" : "Setup Classroom"}
           </h2>
           <p className="text-blue-100 text-sm">Step {step} of {isCourseRep ? 3 : 4}</p>
@@ -153,19 +162,23 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
               {step === 1 && (
                 <div className="space-y-4">
                   <h3 className="text-lg font-bold text-gray-900">What is your Cohort Name?</h3>
+                  <label htmlFor="cohortName" className="sr-only">Cohort Name</label>
                   <input 
+                    id="cohortName"
+                    ref={inputRef}
                     className="w-full border p-3 rounded-xl text-gray-900 outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="e.g. Marketing Level 200"
                     value={repData.cohortName}
                     onChange={e => setRepData({...repData, cohortName: e.target.value})}
                   />
                    <h3 className="text-lg font-bold text-gray-900 mt-4">Approx. Class Size?</h3>
-                   <select className="w-full p-3 border rounded-xl text-gray-900 bg-white" value={repData.approxStudents} onChange={e => setRepData({...repData, approxStudents: e.target.value})}>
+                   <label htmlFor="classSize" className="sr-only">Class Size</label>
+                   <select id="classSize" className="w-full p-3 border rounded-xl text-gray-900 bg-white" value={repData.approxStudents} onChange={e => setRepData({...repData, approxStudents: e.target.value})}>
                     <option value="50">~50</option>
                     <option value="100">~100</option>
                     <option value="200">~200+</option>
                   </select>
-                  <button onClick={() => setStep(2)} className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold mt-4">Next →</button>
+                  <Button onClick={() => setStep(2)} className="w-full mt-4" size="lg">Next →</Button>
                 </div>
               )}
 
@@ -182,9 +195,9 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
                      <button onClick={() => setRepData({...repData, courseCount: (parseInt(repData.courseCount) + 1).toString()})} className="w-12 h-12 rounded-full bg-gray-100 hover:bg-gray-200 font-bold text-xl text-gray-600">+</button>
                   </div>
 
-                  <button onClick={() => setStep(3)} className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold mt-4">
+                  <Button onClick={() => setStep(3)} className="w-full mt-4" size="lg">
                     See Pricing Model →
-                  </button>
+                  </Button>
                 </div>
               )}
 
@@ -196,20 +209,20 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
                     <div className="space-y-3 text-sm bg-white p-4 rounded-lg border border-blue-100 shadow-sm">
                         <div className="flex justify-between items-center pb-2 border-b border-gray-100">
                             <span className="text-gray-600">Single Course Unlock</span>
-                            <span className="font-bold text-gray-900">₵15 / sem</span>
+                            <span className="font-bold text-gray-900">₵{PRICING.SINGLE_COURSE} / sem</span>
                         </div>
                         
                         <div className="flex justify-between items-center pt-2">
                             <span className="text-gray-600">Full Bundle ({repData.courseCount} Courses)</span>
                             <div className="text-right">
-                                <span className="block text-xs text-gray-400 line-through">₵{parseInt(repData.courseCount) * 15}</span>
+                                <span className="block text-xs text-gray-400 line-through">₵{parseInt(repData.courseCount) * PRICING.SINGLE_COURSE}</span>
                                 <span className="font-bold text-green-600 text-lg">₵{calculateBundlePrice(parseInt(repData.courseCount))} / sem</span>
                             </div>
                         </div>
                         
                         <div className="mt-2 pt-2 border-t border-dashed border-green-200 text-center">
                            <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded-full">
-                             🔥 Students save 30% (₵{calculateSavings(parseInt(repData.courseCount))})
+                             🔥 Students save {PRICING.BUNDLE_DISCOUNT * 100}% (₵{calculateSavings(parseInt(repData.courseCount))})
                            </span>
                         </div>
                     </div>
@@ -219,9 +232,15 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
                     You are creating this space for free. Lecturers join for free. Students pay individually based on these rates.
                   </div>
 
-                  <button onClick={handleFinalizeRep} disabled={loading} className="w-full py-4 bg-green-600 text-white rounded-xl font-bold shadow-lg hover:bg-green-700 disabled:bg-gray-300 transition active:scale-[0.98]">
+                  <Button 
+                    onClick={handleFinalizeRep} 
+                    disabled={loading} 
+                    variant="gradient"
+                    size="xl"
+                    className="bg-green-600 hover:bg-green-700"
+                  >
                     {loading ? 'Creating Space...' : 'Create Class Space'}
-                  </button>
+                  </Button>
                 </div>
               )}
             </>
@@ -238,7 +257,7 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
                         <button key={opt} onClick={() => setLecturerData({...lecturerData, classCount: opt})} className={`py-3 border rounded-xl font-bold ${lecturerData.classCount === opt ? 'bg-blue-50 border-blue-500 text-blue-700' : 'text-gray-600'}`}>{opt}</button>
                     ))}
                   </div>
-                  <button onClick={handleLecturerNext} className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold mt-4">Next →</button>
+                  <Button onClick={handleLecturerNext} className="w-full mt-4" size="lg">Next →</Button>
                 </div>
               )}
               
@@ -251,7 +270,7 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
                      <option value="500">200 - 500</option>
                      <option value="1000">500+</option>
                    </select>
-                   <button onClick={handleLecturerNext} className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold mt-4">Next →</button>
+                   <Button onClick={handleLecturerNext} className="w-full mt-4" size="lg">Next →</Button>
                  </div>
               )}
 
@@ -262,7 +281,7 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
                     <button onClick={() => setLecturerData({...lecturerData, hasTAs: 'yes'})} className={`flex-1 py-4 border rounded-xl font-bold ${lecturerData.hasTAs === 'yes' ? 'bg-blue-50 border-blue-500 text-blue-700' : ''}`}>Yes</button>
                     <button onClick={() => setLecturerData({...lecturerData, hasTAs: 'no'})} className={`flex-1 py-4 border rounded-xl font-bold ${lecturerData.hasTAs === 'no' ? 'bg-blue-50 border-blue-500 text-blue-700' : ''}`}>No</button>
                   </div>
-                  <button onClick={handleLecturerNext} className="w-full py-3 bg-blue-600 text-white rounded-xl font-bold mt-4">Recommendation →</button>
+                  <Button onClick={handleLecturerNext} className="w-full mt-4" size="lg">Recommendation →</Button>
                 </div>
               )}
 
@@ -275,7 +294,7 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
                   {lecturerData.selectedTier !== 'starter' && (
                     <input value={coupon} onChange={e => setCoupon(e.target.value.toUpperCase())} placeholder="TEST-DRIVE" className="w-full p-3 border-2 border-dashed border-blue-200 rounded-xl text-center font-mono tracking-widest text-gray-900" />
                   )}
-                  <button onClick={handleFinalizeLecturer} disabled={loading} className="w-full py-4 bg-green-600 text-white rounded-xl font-bold">{loading ? 'Activating...' : 'Activate Plan'}</button>
+                  <Button onClick={handleFinalizeLecturer} disabled={loading} variant="primary" size="xl" className="bg-green-600 hover:bg-green-700">{loading ? 'Activating...' : 'Activate Plan'}</Button>
                 </div>
               )}
             </>

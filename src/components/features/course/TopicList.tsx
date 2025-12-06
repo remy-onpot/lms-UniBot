@@ -33,7 +33,7 @@ export function TopicList({
         return (
           <div key={topic.id} className={`group bg-white p-6 rounded-3xl border ${topicLocked ? 'border-red-100 bg-red-50/10' : 'border-slate-100 hover:border-blue-200'} shadow-sm hover:shadow-md transition-all relative overflow-hidden`}>
             {topicLocked && (
-               <div className="absolute top-0 right-0 bg-red-100 text-red-600 text-[10px] font-bold px-3 py-1 rounded-bl-xl border-l border-b border-red-200">
+               <div className="absolute top-0 right-0 bg-red-100 text-red-700 text-[10px] font-bold px-3 py-1 rounded-bl-xl border-l border-b border-red-200">
                  LOCKED CONTENT
                </div>
             )}
@@ -41,15 +41,19 @@ export function TopicList({
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
               <div>
                 <h3 className="font-bold text-xl text-slate-900 flex items-center gap-3">
-                  <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded-lg text-sm">W{topic.week_number}</span>
+                  <span className="bg-slate-100 text-slate-700 px-2 py-1 rounded-lg text-sm border border-slate-200">W{topic.week_number}</span>
                   {topic.title}
                 </h3>
-                <p className="text-slate-500 text-sm mt-2 leading-relaxed">{topic.description}</p>
+                <p className="text-slate-600 text-sm mt-2 leading-relaxed">{topic.description}</p>
               </div>
               
               {mainHandoutId && !topicLocked && (
-                <Link href={`/dashboard/chat/${mainHandoutId}?pages=${topic.start_page}-${topic.end_page}`} className="shrink-0 px-4 py-2 bg-purple-50 text-purple-700 text-xs font-bold rounded-xl border border-purple-100 hover:bg-purple-100 transition flex items-center gap-1">
-                  <span>🤖</span> Study AI
+                <Link 
+                  href={`/dashboard/chat/${mainHandoutId}?pages=${topic.start_page}-${topic.end_page}`} 
+                  aria-label={`Study week ${topic.week_number} with AI`}
+                  className="shrink-0 px-4 py-2 bg-purple-50 text-purple-700 text-xs font-bold rounded-xl border border-purple-100 hover:bg-purple-100 transition flex items-center gap-1"
+                >
+                  <span aria-hidden="true">🤖</span> Study AI
                 </Link>
               )}
             </div>
@@ -58,6 +62,7 @@ export function TopicList({
               {topicLocked ? (
                 <button 
                   onClick={onUnlock} 
+                  aria-label={`Unlock full access for week ${topic.week_number}`}
                   className="w-full py-3 bg-slate-900 text-white text-sm font-bold rounded-xl shadow-lg hover:shadow-xl transition flex justify-center items-center gap-2"
                 >
                   <span>🔓 Unlock Full Access</span>
@@ -70,19 +75,37 @@ export function TopicList({
                             {canViewAnalysis ? '📊 View Analytics' : '📝 Take Quiz'}
                         </Link>
                         {canEdit && !isCourseRep && (
-                            <button onClick={() => onDeleteQuiz(topic.quizzes[0].id)} className="px-3 py-2.5 text-red-400 hover:bg-red-50 rounded-xl transition">🗑️</button>
+                            <button 
+                              onClick={() => onDeleteQuiz(topic.quizzes[0].id)} 
+                              aria-label={`Delete quiz for ${topic.title}`}
+                              className="px-3 py-2.5 text-red-500 hover:bg-red-50 rounded-xl transition border border-transparent hover:border-red-100"
+                            >
+                              <span aria-hidden="true">🗑️</span>
+                            </button>
                         )}
                     </div>
                   ) : canEdit && !isCourseRep ? (
                     <div className="flex gap-2">
-                      <button onClick={() => onOpenModal('quiz', topic)} className="px-4 py-2 bg-orange-50 text-orange-600 text-sm font-bold rounded-xl hover:bg-orange-100 border border-orange-200">✨ AI Gen</button>
-                      <button onClick={() => onOpenModal('manual', topic)} className="px-4 py-2 bg-slate-50 text-slate-600 text-sm font-bold rounded-xl hover:bg-slate-100 border border-slate-200">✍️ Manual</button>
+                      <button 
+                        onClick={() => onOpenModal('quiz', topic)} 
+                        aria-label={`Generate AI quiz for week ${topic.week_number}`}
+                        className="px-4 py-2 bg-orange-50 text-orange-700 text-sm font-bold rounded-xl hover:bg-orange-100 border border-orange-200"
+                      >
+                        ✨ AI Gen
+                      </button>
+                      <button 
+                        onClick={() => onOpenModal('manual', topic)} 
+                        aria-label={`Create manual quiz for week ${topic.week_number}`}
+                        className="px-4 py-2 bg-slate-50 text-slate-700 text-sm font-bold rounded-xl hover:bg-slate-100 border border-slate-200"
+                      >
+                        ✍️ Manual
+                      </button>
                     </div>
-                  ) : <span className="text-xs font-bold text-slate-300 bg-slate-50 px-3 py-1 rounded-full">No quiz yet</span>}
+                  ) : <span className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">No quiz yet</span>}
                 </>
               )}
               
-              <span className="ml-auto text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 px-2 py-1 rounded">
+              <span className="ml-auto text-[10px] font-bold text-slate-600 uppercase tracking-wider bg-slate-100 px-2 py-1 rounded border border-slate-200">
                 Pg {topic.start_page}-{topic.end_page}
               </span>
             </div>

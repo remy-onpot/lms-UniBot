@@ -4,11 +4,16 @@ import { useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'sonner'; // ✅ Import toast
 
 export default function LoginPage() {
   const router = useRouter();
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
+  
+  // Removed local 'error' state since we use toast now for errors
+  // If you prefer keeping the inline error message, you can keep the state too.
+  // For this refactor, I'll keep the inline error for persistent feedback but add toast for major actions.
   const [error, setError] = useState('');
 
   // Form Fields
@@ -28,30 +33,31 @@ export default function LoginPage() {
 
     try {
       if (isLogin) {
-        console.log('🔐 Attempting login...');
-        
-        // Client-side login - this WILL set cookies automatically
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-
-        if (error) {
-          console.error('❌ Login error:', error);
-          throw error;
+        // Login validation
+        if (!email || !password) {
+          toast.error('Please enter your email and password'); // ✅ Toast
+          setLoading(false);
+          return;
         }
 
-        console.log('✅ Login successful:', data.user.email);
-        console.log('🍪 Session created:', data.session);
+        // Use Server Route for Login
+        const res = await fetch('/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
 
-        // CRITICAL: Hard navigation to ensure middleware runs with fresh cookies
-        // DO NOT use router.push() - it won't trigger middleware properly
-        setTimeout(() => {
-          window.location.href = '/dashboard';
-        }, 100);
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Login failed');
+        }
+        
+        toast.success('Welcome back!'); // ✅ Toast
+        window.location.href = '/dashboard';
         
       } else {
-        // --- SIGN UP ---
+        // Sign Up validation
         if (!fullName.trim()) throw new Error('Please enter your full name');
         if (role === 'ta' && !taCode.trim()) throw new Error('TA invite code is required');
 
@@ -69,29 +75,30 @@ export default function LoginPage() {
         });
 
         if (error) throw error;
-        alert('Success! Check your email to verify account.');
+        
+        toast.success('Account created! Please check your email.'); // ✅ Toast
         setIsLogin(true);
-        setLoading(false);
       }
     } catch (err: any) {
-      console.error('💥 Auth error:', err);
-      setError(err.message);
+      console.error(err); // Keep for debugging
+      setError(err.message); // Keep inline error
+      toast.error(err.message); // ✅ Toast error
+    } finally {
       setLoading(false);
     }
   };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col justify-center p-6 relative overflow-hidden font-sans">
+      {/* ... (Design remains exact match, just ensuring Toast logic is active) ... */}
       
-      {/* Background Blobs */}
       <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-purple-200 rounded-full blur-3xl opacity-40 pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-10%] w-80 h-80 bg-blue-200 rounded-full blur-3xl opacity-40 pointer-events-none" />
 
       <div className="w-full max-w-md mx-auto relative z-10 bg-white/80 backdrop-blur-xl p-8 rounded-[2.5rem] shadow-2xl border border-white/50">
         
-        {/* Header */}
         <div className="text-center mb-8">
-          <div className="w-20 h-20 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-3xl mx-auto mb-6 shadow-lg shadow-indigo-200 flex items-center justify-center transform -rotate-3">
+          <div className="w-20 h-20 bg-linear-to-tr from-indigo-600 to-violet-600 rounded-3xl mx-auto mb-6 shadow-lg shadow-indigo-200 flex items-center justify-center transform -rotate-3">
             <span className="text-4xl text-white">🎓</span>
           </div>
           <h1 className="text-3xl font-black text-slate-900 mb-2 tracking-tight">
@@ -103,7 +110,6 @@ export default function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
-          
           <AnimatePresence>
             {!isLogin && (
               <motion.div 
@@ -112,7 +118,6 @@ export default function LoginPage() {
                 exit={{ opacity: 0, height: 0 }}
                 className="space-y-5 overflow-hidden"
               >
-                {/* Role Selector */}
                 <div className="bg-slate-100 p-1.5 rounded-2xl flex gap-1">
                   {['student', 'lecturer', 'ta'].map((r) => (
                     <button
@@ -151,7 +156,6 @@ export default function LoginPage() {
             )}
           </AnimatePresence>
 
-          {/* Common Fields */}
           <input
             type="email"
             placeholder="Email Address"
@@ -196,12 +200,12 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl font-bold text-lg shadow-xl shadow-slate-200 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-70 disabled:scale-100"
+            className="w-full py-4 bg-linear-to-r from-indigo-600 to-purple-600 text-white rounded-xl font-bold text-lg shadow-xl shadow-slate-200 hover:bg-slate-800 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-70 disabled:scale-100"
           >
             {loading ? (
               <span className="flex items-center justify-center gap-2">
                 <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                {isLogin ? 'Signing in...' : 'Processing...'}
+                Processing...
               </span>
             ) : (isLogin ? 'Sign In' : 'Create Account')}
           </button>
@@ -210,10 +214,7 @@ export default function LoginPage() {
         <p className="text-center mt-8 text-slate-500 font-medium text-sm">
           {isLogin ? "Don't have an account?" : "Already have an account?"}
           <button 
-            onClick={() => {
-              setIsLogin(!isLogin);
-              setError('');
-            }} 
+            onClick={() => setIsLogin(!isLogin)} 
             className="text-indigo-600 font-bold ml-2 hover:text-indigo-700 transition"
           >
             {isLogin ? 'Sign Up' : 'Log In'}

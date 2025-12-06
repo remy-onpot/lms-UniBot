@@ -29,7 +29,11 @@ export function AssignmentList({
       <div className="flex justify-between items-center mb-2">
         <h2 className="text-xl font-bold text-slate-900">Assignments</h2>
         {canEdit && !isCourseRep && (
-            <button onClick={onCreate} className="px-4 py-2 bg-blue-600 text-white text-sm rounded-xl font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition">
+            <button 
+              onClick={onCreate} 
+              aria-label="Create new assignment"
+              className="px-4 py-2 bg-blue-600 text-white text-sm rounded-xl font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition"
+            >
                 + Create New
             </button>
         )}
@@ -55,7 +59,15 @@ export function AssignmentList({
                 </div>
               </div>
               
-              {canEdit && !isCourseRep && <button onClick={() => onDelete(assign.id)} className="text-slate-300 hover:text-red-500 transition">✕</button>}
+              {canEdit && !isCourseRep && (
+                <button 
+                  onClick={() => onDelete(assign.id)} 
+                  aria-label={`Delete assignment ${assign.title}`}
+                  className="text-slate-300 hover:text-red-500 transition"
+                >
+                  <span aria-hidden="true">✕</span>
+                </button>
+              )}
             </div>
 
             {!canEdit && (
