@@ -1,8 +1,16 @@
+// src/components/skeletons/DashboardSkeleton.tsx
+
 import { Skeleton, CardSkeleton } from '../Skeleton';
 
 export function DashboardSkeleton() {
   return (
-    <div className="min-h-screen bg-slate-50 pb-20">
+    <div 
+      className="min-h-screen bg-slate-50 pb-20"
+      role="status" 
+      aria-label="Loading dashboard content"
+    >
+      <span className="sr-only">Loading dashboard...</span>
+      
       {/* Nav */}
       <nav className="bg-white shadow-sm sticky top-0 z-10">
         <div className="mx-auto max-w-7xl px-4 h-16 flex justify-between items-center">

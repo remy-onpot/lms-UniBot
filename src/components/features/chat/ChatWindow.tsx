@@ -1,5 +1,8 @@
 import React, { useRef, useEffect } from 'react';
 import { ChatMessage } from '@/types';
+import { useFace } from '@/components/ui/FaceProvider';
+import { FaceAnalyticsService } from '@/lib/services/face-analytics.service';
+import { UniBotFace } from '@/components/ui/UniBotFace';
 
 interface ChatWindowProps {
   messages: ChatMessage[];
@@ -11,10 +14,24 @@ interface ChatWindowProps {
 
 export function ChatWindow({ messages, input, isLoading, onInputChange, onSend }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const face = useFace();
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    if (isLoading) {
+      face.setState('thinking');
+      FaceAnalyticsService.recordFaceEvent({
+        eventType: 'chat_loading',
+        faceState: 'thinking',
+        metadata: { message_count: messages.length }
+      }).catch(e => console.error('[Chat] Failed to log:', e));
+    } else {
+      face.setState('idle');
+    }
+  }, [isLoading, face]);
 
   return (
     <div className="flex flex-1 flex-col bg-white h-screen">
@@ -33,15 +50,29 @@ export function ChatWindow({ messages, input, isLoading, onInputChange, onSend }
         )}
 
         {messages.map((m) => (
-          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+          <div key={m.id} className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            {/* UniBot avatar on left for assistant/system messages */}
+            {m.role === 'assistant' && (
+              <div className="shrink-0 mt-1">
+                <UniBotFace size="sm" />
+              </div>
+            )}
+
             <div className={`max-w-[85%] rounded-2xl px-4 py-3 shadow-sm text-sm ${
               m.role === 'user' 
-                ? 'bg-blue-600 text-white rounded-br-none' 
+                ? 'bg-blue-600 text-white rounded-br-none ml-auto' 
                 : m.role === 'system' ? 'bg-red-50 text-red-600 border border-red-100'
                 : 'bg-gray-100 text-gray-800 rounded-bl-none'
             }`}>
               <div className="whitespace-pre-wrap">{m.content}</div>
             </div>
+
+            {/* Small user avatar on right for user messages */}
+            {m.role === 'user' && (
+              <div className="shrink-0 mt-1 w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-xs">
+                ME
+              </div>
+            )}
           </div>
         ))}
         

@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useRef, useEffect } from 'react';
 import { ChatMessage } from '@/types';
 
@@ -81,3 +83,5 @@ export function ChatWindow({ messages, input, isLoading, onInputChange, onSend }
     </div>
   );
 }
+
+export default ChatWindow;

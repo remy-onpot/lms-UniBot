@@ -1,10 +1,12 @@
+// src/app/dashboard/courses/[id]/page.tsx
+
 'use client';
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../../../../lib/supabase';
 import { useParams, useRouter } from 'next/navigation';
-import { extractTextFromPDF } from '../../../../lib/utils/pdf-utils'; // ✅ Used in upload/manual quiz
+import { extractTextFromPDF } from '../../../../lib/utils/pdf-utils';
 import { AssignmentService } from '../../../../lib/services/assignment.service';
-import { CourseService } from '../../../../lib/services/course.service'; // ✅ Used in delete quiz
+import { CourseService } from '../../../../lib/services/course.service';
 import { AssignmentSubmission } from '@/types';
 import { 
   useCourse, 
@@ -24,12 +26,11 @@ import { PRICING } from '@/lib/constants';
 import { Button } from '@/components/ui/Button';
 import { toast } from 'sonner';
 import dynamic from 'next/dynamic';
-import { useQueryClient } from '@tanstack/react-query'; // ✅ For refreshing data
+import { useQueryClient } from '@tanstack/react-query';
+import { FocusTrap } from 'focus-trap-react';
 
-// Lazy Load Modals
 const CreateAssignmentModal = dynamic(() => import('@/components/features/course/modals/CreateAssignmentModal'));
 
-// Helper hook for modal accessibility
 function useModalAccessibility(isOpen: boolean, onClose: () => void) {
   const ref = useRef<HTMLInputElement>(null);
   const areaRef = useRef<HTMLTextAreaElement>(null);
@@ -57,18 +58,16 @@ export default function EnhancedCoursePage() {
   const params = useParams();
   const courseId = params?.id as string;
   const router = useRouter();
-  const queryClient = useQueryClient(); // ✅ For refetching
+  const queryClient = useQueryClient();
   
   const [userId, setUserId] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [isCourseRep, setIsCourseRep] = useState(false);
   
-  // React Query Hooks
   const { data: course, isLoading: loadingCourse, error: courseError } = useCourse(courseId);
   const { data: materials, isLoading: loadingMaterials } = useCourseMaterials(courseId);
   const { data: topics = [], isLoading: loadingTopics } = useCourseTopics(courseId);
   
-  // Conditional hooks logic
   const isStudentView = role === 'student' && course?.classes?.lecturer_id !== userId;
   const { data: assignments = [], isLoading: loadingAssignments } = useCourseAssignments(
     courseId, 
@@ -77,7 +76,6 @@ export default function EnhancedCoursePage() {
   );
   const { data: announcements = [] } = useCourseAnnouncements(course?.class_id);
 
-  // Local State
   const [hasAccess, setHasAccess] = useState(false);
   const [showPaywall, setShowPaywall] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -96,13 +94,11 @@ export default function EnhancedCoursePage() {
   const [assignForm, setAssignForm] = useState({ title: '', description: '', total_points: 100, due_date: '' });
   const [gradeOverride, setGradeOverride] = useState<{ score: number | string, feedback: string }>({ score: 0, feedback: '' });
 
-  // Accessibility Hooks
   const topicModalRefs = useModalAccessibility(showModal === 'topic', () => setShowModal(null));
   const announceModalRefs = useModalAccessibility(showModal === 'announce', () => setShowModal(null));
   const quizModalRefs = useModalAccessibility(showModal === 'quiz', () => setShowModal(null));
   const manualModalRefs = useModalAccessibility(showModal === 'manual', () => setShowModal(null));
 
-  // Auth Check
   useEffect(() => {
     const initAuth = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -121,8 +117,6 @@ export default function EnhancedCoursePage() {
     };
     initAuth();
   }, [router, courseId]);
-
-  // --- HANDLERS ---
 
   const refreshData = () => {
     queryClient.invalidateQueries({ queryKey: ['course', courseId] });
@@ -174,13 +168,11 @@ export default function EnhancedCoursePage() {
       if (!e.target.files?.[0]) return; 
       setUploading(true); 
       try { 
-          // ✅ USES PDF UTILS
           const text = await extractTextFromPDF(e.target.files[0]); 
           const path = `${courseId}/handout_${Date.now()}`; 
           await supabase.storage.from('course-content').upload(path, e.target.files[0]); 
           const { data: { publicUrl } } = supabase.storage.from('course-content').getPublicUrl(path); 
           
-          // Delete old if exists
           if (materials?.mainHandout) await supabase.from('materials').delete().eq('id', materials.mainHandout.id); 
           
           await supabase.from('materials').insert([{ 
@@ -223,7 +215,6 @@ export default function EnhancedCoursePage() {
     e.preventDefault(); setProcessing(true);
     try {
       let content = manualQuestionsForm.questions;
-      // ✅ USES PDF UTILS
       if (manualQuestionsForm.file) content = await extractTextFromPDF(manualQuestionsForm.file);
       
       const res = await fetch('/api/process-manual-questions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questions: content, action: manualQuestionsForm.action, topicId: selectedItem.id }) });
@@ -265,7 +256,6 @@ export default function EnhancedCoursePage() {
 
   const handleDeleteQuiz = async (quizId: string) => { 
       if(!confirm("Delete?")) return; 
-      // ✅ USES COURSE SERVICE
       await CourseService.deleteQuiz(quizId); 
       toast.success("Quiz Deleted");
       refreshData(); 
@@ -273,17 +263,13 @@ export default function EnhancedCoursePage() {
   
   const handleDeleteAssignment = async (id: string) => { 
       if(!confirm("Delete?")) return; 
-      // ✅ USES ASSIGNMENT SERVICE
       await AssignmentService.delete(id); 
       toast.success("Assignment Deleted");
       refreshData(); 
   };
   
-  // View Helpers
   const handleViewSubmissions = async (assignId: string, title: string) => { setUploading(true); setSelectedItem({ title }); const subs = await AssignmentService.getSubmissions(assignId); setSubmissionsList(subs); setShowModal('submissions'); setUploading(false); };
-  const handleSaveGrade = async () => { if (!selectedSubmission) return; await AssignmentService.updateGrade(selectedSubmission.id, Number(gradeOverride.score), gradeOverride.feedback || ""); toast.success("Grade Saved!"); setShowModal('submissions'); const subs = await AssignmentService.getSubmissions(selectedSubmission.assignment_id); setSubmissionsList(subs); };
   const handleViewMyResult = (sub: any, title: string) => { setMySubmission(sub); setSelectedItem({ title }); setShowModal('result_slip'); };
-  const openReviewModal = (sub: any) => { setSelectedSubmission(sub); setGradeOverride({ score: sub.lecturer_grade ?? sub.ai_grade, feedback: sub.lecturer_feedback || "" }); setShowModal('review_grading'); };
   
   if (loadingCourse || loadingMaterials || !userId) return <CourseSkeleton />;
   if (courseError) return <ErrorState message="Failed to load course data" onRetry={() => window.location.reload()} />;
@@ -358,14 +344,12 @@ export default function EnhancedCoursePage() {
         </div>
       </div>
 
-      {/* --- MODALS --- */}
-      
       {/* Paywall Modal */}
       {showPaywall && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-300" role="dialog" aria-modal="true">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-300" role="dialog" aria-modal="true" aria-labelledby="paywall-title">
               <div className="bg-white rounded-3xl p-8 w-full max-w-md text-center shadow-2xl">
-                  <div className="text-5xl mb-4">🔓</div>
-                  <h2 className="text-2xl font-bold text-slate-900 mb-2">Unlock Course</h2>
+                  <div className="text-5xl mb-4" aria-hidden="true">🔓</div>
+                  <h2 id="paywall-title" className="text-2xl font-bold text-slate-900 mb-2">Unlock Course</h2>
                   <p className="text-slate-500 mb-6">Get access to all weekly notes and quizzes.</p>
                   <div className="grid grid-cols-2 gap-4 mb-6">
                       <button onClick={() => handlePayment(PRICING.SINGLE_COURSE, 'single')} className="p-4 bg-slate-50 rounded-2xl border-2 border-slate-100 hover:border-blue-500 transition">
@@ -382,29 +366,9 @@ export default function EnhancedCoursePage() {
           </div>
       )}
 
-      {/* Topic Modal */}
-      {showModal === 'topic' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-            <div className="bg-white p-8 rounded-3xl w-full max-w-md shadow-2xl">
-                <h3 className="text-xl font-bold mb-4 text-slate-900">Add Topic</h3>
-                <form onSubmit={handleAddTopic} className="space-y-4">
-                    <input ref={topicModalRefs.inputRef} type="number" placeholder="Week #" value={topicForm.week_number} onChange={e => setTopicForm({...topicForm, week_number: parseInt(e.target.value)})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 font-bold outline-none focus:ring-2 focus:ring-blue-500" required />
-                    <input placeholder="Title" value={topicForm.title} onChange={e => setTopicForm({...topicForm, title: e.target.value})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 outline-none focus:ring-2 focus:ring-blue-500" required />
-                    <textarea placeholder="Description" value={topicForm.description} onChange={e => setTopicForm({...topicForm, description: e.target.value})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 h-24 outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
-                    <div className="grid grid-cols-2 gap-2">
-                        <input type="number" placeholder="Start Page" value={topicForm.start_page} onChange={e => setTopicForm({...topicForm, start_page: parseInt(e.target.value)})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 outline-none" />
-                        <input type="number" placeholder="End Page" value={topicForm.end_page} onChange={e => setTopicForm({...topicForm, end_page: parseInt(e.target.value)})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 outline-none" />
-                    </div>
-                    <div className="flex gap-2 pt-2">
-                        <Button type="button" variant="secondary" onClick={() => setShowModal(null)} className="flex-1">Cancel</Button>
-                        <Button type="submit" className="flex-1">Add Topic</Button>
-                    </div>
-                </form>
-            </div>
-        </div>
-      )}
+      
 
-      {/* Lazy Loaded Assignment Modal */}
+      {/* Assignment Modal */}
       {showModal === 'assignment' && (
         <CreateAssignmentModal 
            onClose={() => setShowModal(null)}
@@ -415,53 +379,82 @@ export default function EnhancedCoursePage() {
         />
       )}
 
-      {/* Announcement Modal */}
-      {showModal === 'announce' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="announce-title">
-             <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
-               <h3 id="announce-title" className="text-xl font-bold mb-4 text-slate-900">Announcement</h3>
-               <form onSubmit={handleSendAnnouncement} className="space-y-4">
-                 <input ref={announceModalRefs.inputRef} placeholder="Title" value={announcementForm.title} onChange={e => setAnnouncementForm({...announcementForm, title: e.target.value})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 outline-none focus:ring-2 focus:ring-blue-500" required />
-                 <textarea placeholder="Message" value={announcementForm.message} onChange={e => setAnnouncementForm({...announcementForm, message: e.target.value})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 h-24 outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
-                 <div className="flex gap-2 pt-2"><Button type="button" variant="secondary" onClick={() => setShowModal(null)} className="flex-1">Cancel</Button><Button type="submit" className="flex-1 bg-green-600 hover:bg-green-700">Send</Button></div>
-               </form>
-             </div>
-        </div>
-      )}
-
-      {/* Manual Questions Modal */}
-      {showModal === 'manual' && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-            <div className="bg-white rounded-3xl p-8 w-full max-w-lg shadow-2xl">
-                <h3 className="text-xl font-bold mb-4 text-slate-900">Manual Quiz Creator</h3>
-                <textarea ref={manualModalRefs.areaRef} value={manualQuestionsForm.questions} onChange={e => setManualQuestionsForm({...manualQuestionsForm, questions: e.target.value})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 h-40 font-mono text-sm outline-none mb-4" placeholder="Type questions here..." />
-                <input type="file" accept=".txt,.doc,.docx,.pdf" onChange={e => setManualQuestionsForm({...manualQuestionsForm, file: e.target.files?.[0] || null})} className="block w-full text-sm text-slate-500 mb-4 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"/>
-                <div className="grid grid-cols-2 gap-2 mt-2">
-                    <button onClick={() => setManualQuestionsForm({...manualQuestionsForm, action: 'convert'})} type="button" className={`p-2 border rounded-lg text-sm ${manualQuestionsForm.action==='convert' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'text-gray-600'}`}>📝 Convert Only</button>
-                    <button onClick={() => setManualQuestionsForm({...manualQuestionsForm, action: 'enhance'})} type="button" className={`p-2 border rounded-lg text-sm ${manualQuestionsForm.action==='enhance' ? 'bg-green-50 border-green-500 text-green-700' : 'text-gray-600'}`}>✨ AI Enhance</button>
-                </div>
-                <div className="flex gap-2 mt-4"><Button type="button" variant="secondary" onClick={() => setShowModal(null)} className="flex-1">Cancel</Button><Button onClick={handleManualQuestions} disabled={processing} className="flex-1 bg-slate-900 text-white">{processing ? 'Processing...' : 'Process'}</Button></div>
-            </div>
-        </div>
-      )}
-
-      {/* Quiz Config Modal */}
-      {showModal === 'quiz' && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-            <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
-              <h3 className="text-xl font-bold mb-4 text-orange-600">AI Quiz Generator</h3>
-              <form onSubmit={handleGenerateQuiz} className="space-y-4">
-                <input ref={quizModalRefs.inputRef} placeholder="Topic" value={quizConfig.topic} onChange={e => setQuizConfig({...quizConfig, topic: e.target.value})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 outline-none focus:ring-2 focus:ring-orange-500" required />
+     {/* Topic Modal */}
+{showModal === 'topic' && (
+<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="add-topic-title">
+    <FocusTrap focusTrapOptions={{ initialFocus: '#topic-week', onDeactivate: () => setShowModal(null), clickOutsideDeactivates: true }}>
+        <div className="bg-white p-8 rounded-3xl w-full max-w-md shadow-2xl">
+            <h3 id="add-topic-title" className="text-xl font-bold mb-4 text-slate-900">Add Topic</h3>
+            <form onSubmit={handleAddTopic} className="space-y-4">
+                <input id="topic-week" type="number" aria-label="Week Number" placeholder="Week #" value={topicForm.week_number} onChange={e => setTopicForm({...topicForm, week_number: parseInt(e.target.value)})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 font-bold outline-none focus:ring-2 focus:ring-blue-500" required />
+                <input aria-label="Topic Title" placeholder="Title" value={topicForm.title} onChange={e => setTopicForm({...topicForm, title: e.target.value})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 outline-none focus:ring-2 focus:ring-blue-500" required />
+                <textarea aria-label="Topic Description" placeholder="Description" value={topicForm.description} onChange={e => setTopicForm({...topicForm, description: e.target.value})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 h-24 outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
                 <div className="grid grid-cols-2 gap-2">
-                  <select value={quizConfig.difficulty} onChange={e => setQuizConfig({...quizConfig, difficulty: e.target.value})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 outline-none"><option>Easy</option><option>Medium</option><option>Hard</option></select>
-                  <select value={quizConfig.numQuestions} onChange={e => setQuizConfig({...quizConfig, numQuestions: parseInt(e.target.value)})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 outline-none"><option value={3}>3 Questions</option><option value={5}>5 Questions</option><option value={10}>10 Questions</option></select>
+                    <input aria-label="Start Page" type="number" placeholder="Start Page" value={topicForm.start_page} onChange={e => setTopicForm({...topicForm, start_page: parseInt(e.target.value)})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 outline-none" />
+                    <input aria-label="End Page" type="number" placeholder="End Page" value={topicForm.end_page} onChange={e => setTopicForm({...topicForm, end_page: parseInt(e.target.value)})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 outline-none" />
                 </div>
-                <div className="flex gap-2"><Button type="button" variant="secondary" onClick={() => setShowModal(null)} className="flex-1">Cancel</Button><Button type="submit" disabled={processing} className="flex-1 bg-orange-600 hover:bg-orange-700">{processing ? 'Generating...' : 'Generate'}</Button></div>
-              </form>
-            </div>
-          </div>
-      )}
+                <div className="flex gap-2 pt-2">
+                    <Button type="button" variant="secondary" onClick={() => setShowModal(null)} className="flex-1">Cancel</Button>
+                    <Button type="submit" className="flex-1">Add Topic</Button>
+                </div>
+            </form>
+        </div>
+    </FocusTrap>
+</div>
+)}
 
+{/* Announcement Modal */}
+{showModal === 'announce' && (
+<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="announce-title">
+     <FocusTrap focusTrapOptions={{ initialFocus: '#announce-title-input', onDeactivate: () => setShowModal(null), clickOutsideDeactivates: true }}>
+         <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
+           <h3 id="announce-title" className="text-xl font-bold mb-4 text-slate-900">Announcement</h3>
+           <form onSubmit={handleSendAnnouncement} className="space-y-4">
+             <input id="announce-title-input" aria-label="Announcement Title" placeholder="Title" value={announcementForm.title} onChange={e => setAnnouncementForm({...announcementForm, title: e.target.value})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 outline-none focus:ring-2 focus:ring-blue-500" required />
+             <textarea aria-label="Announcement Message" placeholder="Message" value={announcementForm.message} onChange={e => setAnnouncementForm({...announcementForm, message: e.target.value})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 h-24 outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+             <div className="flex gap-2 pt-2"><Button type="button" variant="secondary" onClick={() => setShowModal(null)} className="flex-1">Cancel</Button><Button type="submit" className="flex-1 bg-green-600 hover:bg-green-700">Send</Button></div>
+           </form>
+         </div>
+     </FocusTrap>
+</div>
+)}
+
+{/* Manual Questions Modal */}
+{showModal === 'manual' && (
+<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="manual-quiz-title">
+    <FocusTrap focusTrapOptions={{ initialFocus: '#manual-q-input', onDeactivate: () => setShowModal(null), clickOutsideDeactivates: true }}>
+        <div className="bg-white rounded-3xl p-8 w-full max-w-lg shadow-2xl">
+            <h3 id="manual-quiz-title" className="text-xl font-bold mb-4 text-slate-900">Manual Quiz Creator</h3>
+            <textarea id="manual-q-input" aria-label="Questions Text" value={manualQuestionsForm.questions} onChange={e => setManualQuestionsForm({...manualQuestionsForm, questions: e.target.value})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 h-40 font-mono text-sm outline-none mb-4" placeholder="Type questions here..." />
+            <input aria-label="Upload Question File" type="file" accept=".txt,.doc,.docx,.pdf" onChange={e => setManualQuestionsForm({...manualQuestionsForm, file: e.target.files?.[0] || null})} className="block w-full text-sm text-slate-500 mb-4 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"/>
+            <div className="grid grid-cols-2 gap-2 mt-2">
+                <button onClick={() => setManualQuestionsForm({...manualQuestionsForm, action: 'convert'})} type="button" className={`p-2 border rounded-lg text-sm ${manualQuestionsForm.action==='convert' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'text-gray-600'}`}>📝 Convert Only</button>
+                <button onClick={() => setManualQuestionsForm({...manualQuestionsForm, action: 'enhance'})} type="button" className={`p-2 border rounded-lg text-sm ${manualQuestionsForm.action==='enhance' ? 'bg-green-50 border-green-500 text-green-700' : 'text-gray-600'}`}>✨ AI Enhance</button>
+            </div>
+            <div className="flex gap-2 mt-4"><Button type="button" variant="secondary" onClick={() => setShowModal(null)} className="flex-1">Cancel</Button><Button onClick={handleManualQuestions} disabled={processing} className="flex-1 bg-slate-900 text-white">{processing ? 'Processing...' : 'Process'}</Button></div>
+        </div>
+    </FocusTrap>
+</div>
+)}
+
+{/* Quiz Config Modal */}
+{showModal === 'quiz' && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="ai-quiz-title">
+    <FocusTrap focusTrapOptions={{ initialFocus: '#quiz-topic-input', onDeactivate: () => setShowModal(null), clickOutsideDeactivates: true }}>
+        <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl">
+          <h3 id="ai-quiz-title" className="text-xl font-bold mb-4 text-orange-600">AI Quiz Generator</h3>
+          <form onSubmit={handleGenerateQuiz} className="space-y-4">
+            <input id="quiz-topic-input" aria-label="Quiz Topic" placeholder="Topic" value={quizConfig.topic} onChange={e => setQuizConfig({...quizConfig, topic: e.target.value})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 outline-none focus:ring-2 focus:ring-orange-500" required />
+            <div className="grid grid-cols-2 gap-2">
+              <select aria-label="Difficulty" value={quizConfig.difficulty} onChange={e => setQuizConfig({...quizConfig, difficulty: e.target.value})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 outline-none"><option>Easy</option><option>Medium</option><option>Hard</option></select>
+              <select aria-label="Number of Questions" value={quizConfig.numQuestions} onChange={e => setQuizConfig({...quizConfig, numQuestions: parseInt(e.target.value)})} className="w-full bg-slate-50 border-none p-3 rounded-xl text-slate-900 outline-none"><option value={3}>3 Questions</option><option value={5}>5 Questions</option><option value={10}>10 Questions</option></select>
+            </div>
+            <div className="flex gap-2"><Button type="button" variant="secondary" onClick={() => setShowModal(null)} className="flex-1">Cancel</Button><Button type="submit" disabled={processing} className="flex-1 bg-orange-600 hover:bg-orange-700">{processing ? 'Generating...' : 'Generate'}</Button></div>
+          </form>
+        </div>
+    </FocusTrap>
+  </div>
+)}
     </div>
   );
 }

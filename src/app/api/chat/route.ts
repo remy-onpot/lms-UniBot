@@ -1,40 +1,65 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
-import { AppError, handleAPIError } from "../../../lib/error-handler"; 
-import { createClient } from "../../../lib/supabase/server"; 
-import { checkRateLimit } from "../../../lib/rate-limit"; 
-import { logger } from "../../../lib/logger"; // ✅ Import Logger
+import { env } from '@/lib/env';
+import { z } from "zod"; 
+import { AppError, handleAPIError } from "@/lib/error-handler";
+import { createClient } from "@/lib/supabase/server";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { canAccessCourse } from "@/lib/auth-utils";
+import { logger } from "@/lib/logger";
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY || "");
+const genAI = new GoogleGenerativeAI(env.GOOGLE_GENERATIVE_AI_API_KEY || "");
 export const runtime = "edge";
+
+// ✅ Define Validation Schema
+const chatRequestSchema = z.object({
+  messages: z.array(z.object({
+    role: z.enum(['user', 'assistant', 'system']),
+    content: z.string().trim().min(1, "Message cannot be empty").max(10000, "Message too long"),
+    id: z.string().optional(), // Allow UI-generated IDs
+  })).min(1, "Conversation must have at least one message"),
+  documentContext: z.string().max(50000).optional(),
+  materialId: z.string().uuid().optional(), // Ensure valid UUID if provided
+});
 
 export async function POST(req: Request) {
   try {
     const supabase = await createClient();
     const { data: { session } } = await supabase.auth.getSession();
 
-    if (!session) {
-      throw new AppError("Unauthorized", 401);
-    }
+    if (!session) throw new AppError("Unauthorized", 401);
 
     const isAllowed = await checkRateLimit(session.user.id, 'chat');
-    if (!isAllowed) {
-      throw new AppError("Rate limit exceeded. Please try again later.", 429);
+    if (!isAllowed) throw new AppError("Rate limit exceeded.", 429);
+
+    const body = await req.json();
+    
+    // ✅ Validate Input
+    const { messages, documentContext, materialId } = chatRequestSchema.parse(body);
+
+    // Resource Authorization Check (from Step 1)
+    if (materialId) {
+      const { data: material } = await supabase
+        .from('materials')
+        .select('course_id')
+        .eq('id', materialId)
+        .single();
+
+      if (material) {
+        const hasAccess = await canAccessCourse(supabase, session.user.id, material.course_id);
+        if (!hasAccess) throw new AppError("Forbidden", 403);
+      }
     }
 
     if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
       throw new AppError("Server configuration error", 500);
     }
 
-    const { messages, documentContext } = await req.json();
-
-    logger.info("📥 Received chat request from:", session.user.id); // ✅ Logger
-
     const conversationContents = messages
-      .filter((m: any) => m.id !== "0" && m.role !== "system")
-      .map((m: any) => ({
+      .filter((m) => m.role !== "system")
+      .map((m) => ({
         role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content || "" }],
+        parts: [{ text: m.content }],
       }));
 
     let systemInstruction = `You are UniBot, an AI Teaching Assistant.`;
@@ -48,7 +73,6 @@ export async function POST(req: Request) {
     }
 
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
-    logger.info("🔄 Calling Gemini API..."); // ✅ Logger
     const result = await model.generateContentStream({ contents: conversationContents });
 
     const stream = new ReadableStream({
@@ -64,7 +88,6 @@ export async function POST(req: Request) {
     return new NextResponse(stream, { headers: { "Content-Type": "text/plain" } });
 
   } catch (error) {
-    logger.error("Chat API Error:", error); // ✅ Logger
     return handleAPIError(error);
   }
 }

@@ -1,5 +1,6 @@
 import { supabase } from '../supabase'; // ✅ Fixed relative path
 import { Quiz, Question, QuizResult } from '../../types'; // ✅ Fixed relative path
+import { GamificationService } from './gamification.service';
 
 export const QuizService = {
   
@@ -59,6 +60,13 @@ export const QuizService = {
     }]);
 
     if (error) throw error;
+
+    // ✅ NEW: Award XP for studying (non-blocking)
+    try {
+      await GamificationService.recordActivity(userId, 'course_quiz', correct, total);
+    } catch (e) {
+      console.error('Gamification error:', e);
+    }
   },
 
   async unlockResults(userId: string, courseId: string) {

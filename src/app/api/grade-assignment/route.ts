@@ -1,44 +1,55 @@
+// src/app/api/grade-assignment/route.ts
+
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
+import { env } from '@/lib/env';
+import { z } from "zod"; 
 import { AppError, handleAPIError } from "@/lib/error-handler";
-import { AIGradedResponse } from "@/types"; // ✅ Import Type
+import { AIGradedResponse } from "@/types";
+import { createClient } from "@/lib/supabase/server";
+import { checkRateLimit } from "@/lib/rate-limit";
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY || "");
+const genAI = new GoogleGenerativeAI(env.GOOGLE_GENERATIVE_AI_API_KEY || "");
 
-// Helper to safely extract JSON
+// ✅ Define Validation Schema
+const gradingSchema = z.object({
+  assignmentTitle: z.string().min(1).max(200),
+  assignmentDescription: z.string().min(1).max(2000),
+  studentText: z.string().min(20, "Submission is too short to grade").max(100000, "Submission too large"),
+  maxPoints: z.number().int().min(1).max(1000),
+});
+
 function extractJSON(text: string): AIGradedResponse {
+  // ... (Existing JSON extraction helper logic)
   try {
-    // Try direct parse
     return JSON.parse(text) as AIGradedResponse;
   } catch {
-    // Try finding JSON block
     const firstOpen = text.indexOf("{");
     const lastClose = text.lastIndexOf("}");
-
     if (firstOpen !== -1 && lastClose !== -1) {
       const jsonString = text.substring(firstOpen, lastClose + 1);
       try {
-        // Clean potential control characters
         const cleaned = jsonString.replace(/[\n\r]/g, " ").replace(/\\n/g, "\\n");
         return JSON.parse(cleaned) as AIGradedResponse;
-      } catch {
-        throw new AppError("Malformed JSON in AI response", 500);
-      }
+      } catch { throw new AppError("Malformed JSON", 500); }
     }
-    throw new AppError("No JSON found in AI response", 500);
+    throw new AppError("No JSON found", 500);
   }
 }
 
 export async function POST(req: Request) {
   try {
-    const { assignmentTitle, assignmentDescription, studentText, maxPoints } = await req.json();
+    const supabase = await createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new AppError("Unauthorized", 401);
 
-    if (!studentText || studentText.trim().length < 20) {
-      throw new AppError(
-        "⚠️ Could not read document text. The file might be a scanned image or empty.",
-        400
-      );
-    }
+    const isAllowed = await checkRateLimit(session.user.id, 'grading');
+    if (!isAllowed) throw new AppError("Rate limit exceeded.", 429);
+
+    const body = await req.json();
+    
+    // ✅ Validate Input
+    const { assignmentTitle, assignmentDescription, studentText, maxPoints } = gradingSchema.parse(body);
 
     const prompt = `
       You are a strict university professor. Grade this student submission.
@@ -68,10 +79,10 @@ export async function POST(req: Request) {
 
     const result = await model.generateContent(prompt);
     const responseText = result.response.text();
-    const jsonResponse: AIGradedResponse = extractJSON(responseText); // ✅ Typed
+    const jsonResponse = extractJSON(responseText);
 
     return NextResponse.json(jsonResponse);
-  } catch (error: unknown) { // ✅ Unknown is safer than any
+  } catch (error) {
     return handleAPIError(error);
   }
 }

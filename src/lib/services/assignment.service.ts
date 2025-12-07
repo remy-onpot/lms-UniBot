@@ -1,6 +1,7 @@
 import { supabase } from '../supabase'; 
 import { extractTextFromPDF } from '../utils/pdf-utils'; 
 import { AssignmentSubmission } from '../../types'; 
+import { GamificationService } from './gamification.service';
 
 export const AssignmentService = {
 
@@ -95,6 +96,14 @@ export const AssignmentService = {
     }, { onConflict: 'assignment_id, student_id' });
 
     if (dbError) throw dbError;
+
+    // ✅ NEW: Award XP for completing an assignment (non-blocking)
+    try {
+      await GamificationService.recordActivity(userId, 'assignment');
+    } catch (e) {
+      console.error('Failed to award XP for assignment:', e);
+      // do not fail submission because gamification failed
+    }
 
     return aiResult;
   },

@@ -10,8 +10,8 @@ export interface UserProfile {
   plan_tier: PlanTier;
   university_id?: string;
   onboarding_completed?: boolean;
-  
-  // ✅ Gamification Fields
+
+  // Gamification
   xp: number;
   gems: number;
   current_streak: number;
@@ -19,6 +19,15 @@ export interface UserProfile {
   streak_freezes: number;
   last_activity_date?: string;
   last_login_date?: string;
+
+  // ✅ New Fields
+  avatar_url?: string;
+  phone_number?: string;
+  bio?: string;
+  interests?: string[];
+  profile_frame: string;
+  owned_frames: string[];
+  achievements?: Achievement[];
 }
 
 export interface Class {
@@ -175,4 +184,29 @@ export interface StreakUpdate {
   usedFreeze?: boolean;
   earnedFreeze?: boolean;
   earnedGems?: number;
+}
+
+export interface Achievement {
+  id: string;
+  title: string;
+  description: string;
+  icon: string;
+  unlocked_at?: string;
+}
+
+export interface FrameItem {
+  id: string;
+  name: string;
+  cost: number;
+  cssClass: string; // Tailwind classes for the border/effect
+}
+
+// ✅ NEW: Database-driven Shop Item (used for frames, badges, themes)
+export interface ShopItem {
+  id: string;
+  name: string;
+  description?: string;
+  cost: number;
+  category: 'frame' | 'badge' | 'theme';
+  asset_value: string; // The CSS class or URL used to render the item
 }

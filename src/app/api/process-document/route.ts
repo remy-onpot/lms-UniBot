@@ -1,25 +1,52 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { createClient } from "@supabase/supabase-js";
+import { createClient as createServerClient } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
+import { env } from '@/lib/env';
+import { z } from "zod"; 
 import { AppError, handleAPIError } from "@/lib/error-handler";
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY || "");
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+const genAI = new GoogleGenerativeAI(env.GOOGLE_GENERATIVE_AI_API_KEY || "");
+const supabaseAdmin = createServerClient(
+  env.NEXT_PUBLIC_SUPABASE_URL!,
+  env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+// ✅ Define Validation Schema
+const processDocSchema = z.object({
+  materialId: z.string().uuid(),
+  text: z.string().min(50, "Document text is too short").max(500000, "Document text is too large"),
+});
 
 export async function POST(req: Request) {
   try {
-    const { materialId, text } = await req.json();
+    const supabase = await createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new AppError("Unauthorized", 401);
 
-    if (!materialId || !text) {
-      throw new AppError("Missing text or materialId", 400);
+    const body = await req.json();
+    
+    // ✅ Validate Input
+    const { materialId, text } = processDocSchema.parse(body);
+
+    // Ownership Check (from Step 1)
+    const { data: material } = await supabase
+      .from('materials')
+      .select('course_id, courses(class_id, classes(lecturer_id))')
+      .eq('id', materialId)
+      .single();
+
+    // @ts-ignore
+    const isOwner = material?.courses?.classes?.lecturer_id === session.user.id;
+    if (!isOwner) {
+       const { data: userProfile } = await supabase.from('users').select('role').eq('id', session.user.id).single();
+       if (userProfile?.role !== 'super_admin') {
+          throw new AppError("Forbidden", 403);
+       }
     }
 
     console.log(`🔄 Processing document ${materialId} (${text.length} chars)...`);
 
-    // Chunking logic
     const chunkSize = 500;
     const overlap = 100;
     const chunks: string[] = [];
@@ -28,17 +55,12 @@ export async function POST(req: Request) {
       chunks.push(text.slice(i, i + chunkSize));
     }
 
-    console.log(`📦 Created ${chunks.length} chunks.`);
-
-    // Embedding model
     const embeddingModel = genAI.getGenerativeModel({ model: "embedding-001" });
 
     const insertionPromises = chunks.map(async (chunk, index) => {
       try {
         const result = await embeddingModel.embedContent(chunk);
         const embedding = result.embedding.values;
-
-        // Estimate page number
         const pageNumber = Math.floor((index * (chunkSize - overlap)) / 3000) + 1;
 
         return {
@@ -48,21 +70,17 @@ export async function POST(req: Request) {
           embedding,
         };
       } catch (err) {
-        console.error("Embedding error for chunk", index, err);
+        console.error("Embedding error", err);
         return null;
       }
     });
 
     const rows = (await Promise.all(insertionPromises)).filter(r => r !== null);
 
-    if (rows.length === 0) {
-      throw new AppError("Failed to generate embeddings for all chunks.", 500);
-    }
+    if (rows.length === 0) throw new AppError("Failed to generate embeddings", 500);
 
-    const { error } = await supabase.from("document_sections").insert(rows);
+    const { error } = await supabaseAdmin.from("document_sections").insert(rows);
     if (error) throw new AppError(error.message, 500);
-
-    console.log(`✅ Successfully stored ${rows.length} embeddings.`);
 
     return NextResponse.json({ success: true, chunks: rows.length });
 
@@ -70,4 +88,3 @@ export async function POST(req: Request) {
     return handleAPIError(error);
   }
 }
-    

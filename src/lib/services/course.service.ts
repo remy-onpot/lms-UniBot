@@ -95,5 +95,23 @@ export const CourseService = {
   async deleteAssignment(id: string) {
     const { error } = await supabase.from('assignments').delete().eq('id', id);
     if (error) throw error;
+  },
+
+  // ✅ NEW: Get topics the student has already been tested on
+  async getReviewTopics(userId: string): Promise<string[]> {
+    // 1. Get all quizzes the student has submitted results for
+    const { data: results } = await supabase
+      .from('quiz_results')
+      .select('quiz_id, quizzes(topic)')
+      .eq('student_id', userId);
+
+    if (!results) return [];
+
+    // 2. Extract unique topic names
+    // @ts-ignore
+    const topics = results.map(r => r.quizzes?.topic).filter(Boolean);
+    
+    // 3. Deduplicate
+    return Array.from(new Set(topics));
   }
 };

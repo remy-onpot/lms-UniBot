@@ -1,57 +1,37 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
+import { env } from '@/lib/env';
+import { z } from "zod"; 
 import { AppError, handleAPIError } from "@/lib/error-handler";
+import { createClient } from "@/lib/supabase/server";
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY || "");
+const genAI = new GoogleGenerativeAI(env.GOOGLE_GENERATIVE_AI_API_KEY || "");
+
+// ✅ Define Validation Schema
+const manualQuestionsSchema = z.object({
+  questions: z.string().min(10, "Please provide more question content").max(50000),
+  action: z.enum(['convert', 'enhance']),
+  topicId: z.string().uuid(),
+});
 
 export async function POST(req: Request) {
   try {
-    const { questions, action, topicId } = await req.json();
+    const supabase = await createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new AppError("Unauthorized", 401);
 
-    if (!questions || !action) {
-      throw new AppError("Missing required fields: questions or action", 400);
-    }
+    const body = await req.json();
+    
+    // ✅ Validate Input
+    const { questions, action, topicId } = manualQuestionsSchema.parse(body);
 
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash"
-    });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     let prompt = "";
-
     if (action === "enhance") {
-      prompt = `You are a quiz improvement assistant. Take these quiz questions and:
-1. Rephrase them for clarity and better understanding
-2. Improve the options to be more precise
-3. Add helpful explanations
-4. Keep the same difficulty level
-
-Original questions:
-${questions}
-
-Return ONLY a JSON array in this structure:
-[
-  {
-    "question": "Enhanced question text",
-    "options": ["Option A", "Option B", "Option C", "Option D"],
-    "correct_answer": "Option A",
-    "explanation": "Why this is correct"
-  }
-]`;
+      prompt = `You are a quiz improvement assistant... (Enhance Prompt) ... Original: ${questions} ... JSON output...`;
     } else {
-      prompt = `Convert these questions into a standardized quiz format.
-
-Raw input:
-${questions}
-
-Return ONLY a JSON array in this structure:
-[
-  {
-    "question": "Question text",
-    "options": ["Option A", "Option B", "Option C", "Option D"],
-    "correct_answer": "Correct option",
-    "explanation": "Brief explanation"
-  }
-]`;
+      prompt = `Convert these questions... (Convert Prompt) ... Input: ${questions} ... JSON output...`;
     }
 
     const result = await model.generateContent(prompt);
@@ -65,13 +45,7 @@ Return ONLY a JSON array in this structure:
     }
 
     const cleaned = aiText.substring(firstBracket, lastBracket + 1);
-    let quizData;
-
-    try {
-      quizData = JSON.parse(cleaned);
-    } catch {
-      throw new AppError("Failed to parse AI JSON output.", 500);
-    }
+    const quizData = JSON.parse(cleaned);
 
     return NextResponse.json({ quiz: quizData });
 

@@ -1,27 +1,26 @@
+// src/app/login/page.tsx
 'use client';
 
 import { useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { toast } from 'sonner'; // ✅ Import toast
+import { toast } from 'sonner';
+import { UniBotFace } from '@/components/ui/UniBotFace';
+import { useFace } from '@/components/ui/FaceProvider';
+import { FaceAnalyticsService } from '@/lib/services/face-analytics.service';
 
 export default function LoginPage() {
   const router = useRouter();
+  const face = useFace();
   const [isLogin, setIsLogin] = useState(true);
   const [loading, setLoading] = useState(false);
-  
-  // Removed local 'error' state since we use toast now for errors
-  // If you prefer keeping the inline error message, you can keep the state too.
-  // For this refactor, I'll keep the inline error for persistent feedback but add toast for major actions.
   const [error, setError] = useState('');
 
   // Form Fields
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
-  
-  // Role State
   const [role, setRole] = useState<'student' | 'lecturer' | 'ta'>('student');
   const [isCourseRep, setIsCourseRep] = useState(false);
   const [taCode, setTaCode] = useState('');
@@ -30,17 +29,17 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setError('');
+    face.pulse('thinking', 2000, { event: 'login_attempt', isLogin });
 
     try {
       if (isLogin) {
-        // Login validation
         if (!email || !password) {
-          toast.error('Please enter your email and password'); // ✅ Toast
+          toast.error('Please enter your email and password');
+          face.pulse('sad', 1200, { event: 'login_validation_error' });
           setLoading(false);
           return;
         }
 
-        // Use Server Route for Login
         const res = await fetch('/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -49,15 +48,15 @@ export default function LoginPage() {
 
         const data = await res.json();
 
-        if (!res.ok) {
-          throw new Error(data.error || 'Login failed');
-        }
+        if (!res.ok) throw new Error(data.error || 'Login failed');
         
-        toast.success('Welcome back!'); // ✅ Toast
+        // Celebrate briefly then redirect
+        toast.success('Welcome back!');
+        face.pulse('happy', 1500, { event: 'login_success' });
+        await FaceAnalyticsService.logLogin('email');
+        await new Promise((res) => setTimeout(res, 700));
         window.location.href = '/dashboard';
-        
       } else {
-        // Sign Up validation
         if (!fullName.trim()) throw new Error('Please enter your full name');
         if (role === 'ta' && !taCode.trim()) throw new Error('TA invite code is required');
 
@@ -75,14 +74,22 @@ export default function LoginPage() {
         });
 
         if (error) throw error;
-        
-        toast.success('Account created! Please check your email.'); // ✅ Toast
+        // Show happy face, then switch to login view
+        toast.success('Account created! Please check your email.');
+        face.pulse('happy', 1500, { event: 'signup_success', role });
+        await FaceAnalyticsService.recordFaceEvent({
+          eventType: 'signup',
+          faceState: 'happy',
+          metadata: { role }
+        });
+        await new Promise((res) => setTimeout(res, 900));
         setIsLogin(true);
       }
     } catch (err: any) {
-      console.error(err); // Keep for debugging
-      setError(err.message); // Keep inline error
-      toast.error(err.message); // ✅ Toast error
+      setError(err.message);
+      toast.error(err.message);
+      face.pulse('sad', 1500, { event: 'login_error', error: err.message });
+      await FaceAnalyticsService.logError('login_page', err);
     } finally {
       setLoading(false);
     }
@@ -90,8 +97,6 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col justify-center p-6 relative overflow-hidden font-sans">
-      {/* ... (Design remains exact match, just ensuring Toast logic is active) ... */}
-      
       <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-purple-200 rounded-full blur-3xl opacity-40 pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-10%] w-80 h-80 bg-blue-200 rounded-full blur-3xl opacity-40 pointer-events-none" />
 
@@ -99,12 +104,13 @@ export default function LoginPage() {
         
         <div className="text-center mb-8">
           <div className="w-20 h-20 bg-linear-to-tr from-indigo-600 to-violet-600 rounded-3xl mx-auto mb-6 shadow-lg shadow-indigo-200 flex items-center justify-center transform -rotate-3">
-            <span className="text-4xl text-white">🎓</span>
+            <UniBotFace size="md" />
           </div>
           <h1 className="text-3xl font-black text-slate-900 mb-2 tracking-tight">
             {isLogin ? 'Welcome Back' : 'Get Started'}
           </h1>
-          <p className="text-slate-500 font-medium">
+          {/* Fix: text-slate-500 -> text-slate-600 */}
+          <p className="text-slate-600 font-medium">
             {isLogin ? 'Continue your learning journey' : 'Create your smart account'}
           </p>
         </div>
@@ -127,7 +133,7 @@ export default function LoginPage() {
                       className={`flex-1 py-3 rounded-xl text-xs font-bold capitalize transition-all duration-200 ${
                         role === r 
                           ? 'bg-white text-indigo-600 shadow-sm' 
-                          : 'text-slate-400 hover:text-slate-600'
+                          : 'text-slate-500 hover:text-slate-700' // Darker non-active text
                       }`}
                     >
                       {r === 'ta' ? 'TA' : r}
@@ -138,7 +144,8 @@ export default function LoginPage() {
                 <input
                   type="text"
                   placeholder="Full Name"
-                  className="w-full bg-slate-50 border-2 border-transparent px-5 py-4 rounded-2xl text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:bg-white outline-none font-bold transition"
+                  aria-label="Full Name"
+                  className="w-full bg-slate-50 border-2 border-transparent px-5 py-4 rounded-2xl text-slate-900 placeholder:text-slate-500 focus:border-indigo-500 focus:bg-white outline-none font-bold transition"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                 />
@@ -147,7 +154,8 @@ export default function LoginPage() {
                   <input
                     type="text"
                     placeholder="TA Invite Code"
-                    className="w-full bg-orange-50 border-2 border-orange-100 px-5 py-4 rounded-2xl text-orange-900 placeholder:text-orange-300 focus:border-orange-500 outline-none font-bold transition"
+                    aria-label="TA Invite Code"
+                    className="w-full bg-orange-50 border-2 border-orange-100 px-5 py-4 rounded-2xl text-orange-900 placeholder:text-orange-400 focus:border-orange-500 outline-none font-bold transition"
                     value={taCode}
                     onChange={(e) => setTaCode(e.target.value)}
                   />
@@ -159,7 +167,8 @@ export default function LoginPage() {
           <input
             type="email"
             placeholder="Email Address"
-            className="w-full bg-slate-50 border-2 border-transparent px-5 py-4 rounded-2xl text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:bg-white outline-none font-bold transition"
+            aria-label="Email Address"
+            className="w-full bg-slate-50 border-2 border-transparent px-5 py-4 rounded-2xl text-slate-900 placeholder:text-slate-500 focus:border-indigo-500 focus:bg-white outline-none font-bold transition"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
@@ -168,7 +177,8 @@ export default function LoginPage() {
           <input
             type="password"
             placeholder="Password"
-            className="w-full bg-slate-50 border-2 border-transparent px-5 py-4 rounded-2xl text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:bg-white outline-none font-bold transition"
+            aria-label="Password"
+            className="w-full bg-slate-50 border-2 border-transparent px-5 py-4 rounded-2xl text-slate-900 placeholder:text-slate-500 focus:border-indigo-500 focus:bg-white outline-none font-bold transition"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
@@ -186,13 +196,14 @@ export default function LoginPage() {
               <input type="checkbox" className="hidden" checked={isCourseRep} onChange={(e) => setIsCourseRep(e.target.checked)} />
               <div className="flex-1">
                 <p className="font-bold text-slate-700 text-sm">I am a Course Rep</p>
-                <p className="text-xs text-slate-400 font-medium">I manage my class cohort</p>
+                {/* Fix: text-slate-400 -> text-slate-500 */}
+                <p className="text-xs text-slate-500 font-medium">I manage my class cohort</p>
               </div>
             </motion.label>
           )}
 
           {error && (
-            <div className="bg-red-50 text-red-500 p-4 rounded-2xl text-sm font-bold text-center border border-red-100">
+            <div className="bg-red-50 text-red-600 p-4 rounded-2xl text-sm font-bold text-center border border-red-200">
               {error}
             </div>
           )}
@@ -211,7 +222,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="text-center mt-8 text-slate-500 font-medium text-sm">
+        <p className="text-center mt-8 text-slate-600 font-medium text-sm">
           {isLogin ? "Don't have an account?" : "Already have an account?"}
           <button 
             onClick={() => setIsLogin(!isLogin)} 

@@ -6,6 +6,7 @@ import QueryProvider from "../components/providers/QueryProvider";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { Toaster } from 'sonner';
 import Script from 'next/script'; // ✅ Import Script
+import FaceProviderClient from '../components/ui/FaceProviderClient';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -60,7 +61,10 @@ export default function RootLayout({
                 enableSystem
                 disableTransitionOnChange
               >
-                {children}
+                {/* FaceProvider enables global UniBot face control */}
+                <FaceProviderClient>
+                  {children}
+                </FaceProviderClient>
                 <Toaster position="top-right" richColors closeButton />
             </ThemeProvider>
           </QueryProvider>

@@ -7,7 +7,7 @@ import { ClassService, DashboardClass } from '../../../../lib/services/class.ser
 import { CourseService } from '../../../../lib/services/course.service';
 import { Course } from '../../../../types';
 import Link from 'next/link';
-
+import { FocusTrap } from 'focus-trap-react';
 export default function ClassPage() {
   const params = useParams();
   const router = useRouter();
@@ -155,27 +155,30 @@ export default function ClassPage() {
       </div>
 
       {/* ADD MODULE MODAL */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-            <div className="bg-white p-6 rounded-xl w-full max-w-md shadow-2xl">
-                <h3 className="text-xl font-bold mb-4 text-gray-900">Add New Module</h3>
-                <form onSubmit={handleAddModule} className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-                        <input className="w-full border p-2 rounded text-gray-900 focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="e.g. Week 1: Introduction" value={newCourse.title} onChange={e => setNewCourse({...newCourse, title: e.target.value})} required />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                        <textarea className="w-full border p-2 rounded text-gray-900 h-24 resize-none focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="Overview of this week..." value={newCourse.description} onChange={e => setNewCourse({...newCourse, description: e.target.value})} />
-                    </div>
-                    <div className="flex gap-3 mt-6">
-                        <button type="button" onClick={() => setShowModal(false)} className="flex-1 border py-2 rounded text-gray-700 hover:bg-gray-50 font-medium">Cancel</button>
-                        <button type="submit" disabled={processing} className="flex-1 bg-indigo-600 text-white py-2 rounded font-bold hover:bg-indigo-700 transition">{processing ? 'Adding...' : 'Add'}</button>
-                    </div>
-                </form>
-            </div>
+{showModal && (
+<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="add-module-title">
+    <FocusTrap focusTrapOptions={{ initialFocus: '#module-title', onDeactivate: () => setShowModal(false), clickOutsideDeactivates: true }}>
+        <div className="bg-white p-6 rounded-xl w-full max-w-md shadow-2xl">
+            <h3 id="add-module-title" className="text-xl font-bold mb-4 text-gray-900">Add New Module</h3>
+            <form onSubmit={handleAddModule} className="space-y-4">
+                <div>
+                    <label htmlFor="module-title" className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+                    <input id="module-title" className="w-full border p-2 rounded text-gray-900 focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="e.g. Week 1: Introduction" value={newCourse.title} onChange={e => setNewCourse({...newCourse, title: e.target.value})} required />
+                </div>
+                <div>
+                    <label htmlFor="module-desc" className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                    <textarea id="module-desc" className="w-full border p-2 rounded text-gray-900 h-24 resize-none focus:ring-2 focus:ring-indigo-500 outline-none" placeholder="Overview of this week..." value={newCourse.description} onChange={e => setNewCourse({...newCourse, description: e.target.value})} />
+                </div>
+                <div className="flex gap-3 mt-6">
+                    <button type="button" onClick={() => setShowModal(false)} className="flex-1 border py-2 rounded text-gray-700 hover:bg-gray-50 font-medium">Cancel</button>
+                    <button type="submit" disabled={processing} className="flex-1 bg-indigo-600 text-white py-2 rounded font-bold hover:bg-indigo-700 transition">{processing ? 'Adding...' : 'Add'}</button>
+                </div>
+            </form>
         </div>
-      )}
+    </FocusTrap>
+</div>
+)}
+
     </div>
   );
 }

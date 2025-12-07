@@ -42,18 +42,18 @@ export function AssignmentList({
       {assignments.map(assign => {
         const isLate = new Date() > new Date(assign.due_date);
         return (
-          <div key={assign.id} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition">
+          <div key={assign.id} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-200 hover:shadow-md transition">
             <div className="flex justify-between items-start">
               <div>
                 <div className="flex gap-2 items-center mb-2">
-                    <span className="bg-blue-50 text-blue-600 px-2 py-1 rounded-lg text-xs font-bold uppercase tracking-wider">Assignment</span>
-                    <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded-lg text-xs font-bold">{assign.total_points} Pts</span>
+                    <span className="bg-blue-50 text-blue-700 px-2 py-1 rounded-lg text-xs font-bold uppercase tracking-wider">Assignment</span>
+                    <span className="bg-slate-100 text-slate-700 px-2 py-1 rounded-lg text-xs font-bold">{assign.total_points} Pts</span>
                 </div>
                 <h3 className="font-bold text-lg text-slate-900">{assign.title}</h3>
-                <p className="text-sm text-slate-500 mt-1 mb-4">{assign.description}</p>
+                <p className="text-sm text-slate-600 mt-1 mb-4">{assign.description}</p>
                 <div className="flex gap-2 items-center text-xs font-bold">
-                   <span className="text-slate-400">Due Date:</span>
-                   <span className={`${isLate ? 'text-red-500' : 'text-slate-700'}`}>
+                   <span className="text-slate-500">Due Date:</span>
+                   <span className={`${isLate ? 'text-red-600' : 'text-slate-900'}`}>
                       {new Date(assign.due_date).toLocaleDateString()}{isLate ? ' (Closed)' : ''}
                    </span>
                 </div>
@@ -63,7 +63,7 @@ export function AssignmentList({
                 <button 
                   onClick={() => onDelete(assign.id)} 
                   aria-label={`Delete assignment ${assign.title}`}
-                  className="text-slate-300 hover:text-red-500 transition"
+                  className="text-slate-400 hover:text-red-600 transition p-2"
                 >
                   <span aria-hidden="true">✕</span>
                 </button>
