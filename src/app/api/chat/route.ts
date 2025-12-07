@@ -6,20 +6,18 @@ import { AppError, handleAPIError } from "@/lib/error-handler";
 import { createClient } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { canAccessCourse } from "@/lib/auth-utils";
-import { logger } from "@/lib/logger";
 
 const genAI = new GoogleGenerativeAI(env.GOOGLE_GENERATIVE_AI_API_KEY || "");
 export const runtime = "edge";
 
-// ✅ Define Validation Schema
 const chatRequestSchema = z.object({
   messages: z.array(z.object({
     role: z.enum(['user', 'assistant', 'system']),
-    content: z.string().trim().min(1, "Message cannot be empty").max(10000, "Message too long"),
-    id: z.string().optional(), // Allow UI-generated IDs
-  })).min(1, "Conversation must have at least one message"),
+    content: z.string().trim().min(1).max(10000),
+    id: z.string().optional(),
+  })).min(1),
   documentContext: z.string().max(50000).optional(),
-  materialId: z.string().uuid().optional(), // Ensure valid UUID if provided
+  materialId: z.string().uuid().optional(),
 });
 
 export async function POST(req: Request) {
@@ -33,11 +31,8 @@ export async function POST(req: Request) {
     if (!isAllowed) throw new AppError("Rate limit exceeded.", 429);
 
     const body = await req.json();
-    
-    // ✅ Validate Input
     const { messages, documentContext, materialId } = chatRequestSchema.parse(body);
 
-    // Resource Authorization Check (from Step 1)
     if (materialId) {
       const { data: material } = await supabase
         .from('materials')
@@ -49,10 +44,6 @@ export async function POST(req: Request) {
         const hasAccess = await canAccessCourse(supabase, session.user.id, material.course_id);
         if (!hasAccess) throw new AppError("Forbidden", 403);
       }
-    }
-
-    if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-      throw new AppError("Server configuration error", 500);
     }
 
     const conversationContents = messages
@@ -72,7 +63,8 @@ export async function POST(req: Request) {
       conversationContents[0].parts[0].text = `${systemInstruction}\n\nUser: ${conversationContents[0].parts[0].text}`;
     }
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+    // ✅ FIX: Use Gemini 2.5 Flash
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     const result = await model.generateContentStream({ contents: conversationContents });
 
     const stream = new ReadableStream({

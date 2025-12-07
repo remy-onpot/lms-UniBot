@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { FaceAnalyticsService } from '@/lib/services/face-analytics.service';
 
-type FaceState = 'idle' | 'thinking' | 'bouncing' | 'happy' | 'sad';
+export type FaceState = 'idle' | 'thinking' | 'bouncing' | 'happy' | 'sad';
 
 interface FaceContextValue {
   state: FaceState;
@@ -11,18 +11,17 @@ interface FaceContextValue {
   pulse: (s: FaceState, duration?: number, context?: Record<string, any>) => void;
 }
 
-const FaceContext = createContext<FaceContextValue | undefined>(undefined);
+// 1. Export the Context itself
+export const FaceContext = createContext<FaceContextValue | undefined>(undefined);
 
 export const FaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, setState] = useState<FaceState>('idle');
   const timerRef = useRef<number | null>(null);
 
   const pulse = useCallback((s: FaceState, duration = 900, context?: Record<string, any>) => {
-    // Clear existing timer
     if (timerRef.current) window.clearTimeout(timerRef.current);
     setState(s);
     
-    // Log face event to analytics (fire and forget)
     FaceAnalyticsService.logPulse(s, context).catch(e => {
       console.error('[FaceProvider] Failed to log pulse:', e);
     });
@@ -42,5 +41,3 @@ export function useFace() {
   if (!ctx) throw new Error('useFace must be used within FaceProvider');
   return ctx;
 }
-
-export type { FaceState };

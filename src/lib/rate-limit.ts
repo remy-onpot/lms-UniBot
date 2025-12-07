@@ -1,22 +1,23 @@
-import { supabase } from './supabase'; // Relative path
+import { createClient } from './supabase/server'; // ✅ Import the SERVER client creator
 
-// Define limits for different actions
+// Define limits
 const LIMITS: { [key: string]: number } = {
-  chat: 50,          // 50 messages/hour
-  quiz_generation: 10, // 10 quizzes/hour
-  grading: 20        // 20 assignments/hour
+  chat: 50,
+  quiz_generation: 10,
+  grading: 20
 };
 
 const WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
 export async function checkRateLimit(userId: string, action: 'chat' | 'quiz_generation' | 'grading'): Promise<boolean> {
   try {
+    // ✅ Create a fresh server client for this request
+    const supabase = await createClient();
+    
     const limit = LIMITS[action] || 50;
     const now = new Date();
     const windowStart = new Date(now.getTime() - WINDOW_MS).toISOString();
 
-    // 1. Count requests in the last hour
-    // Note: This requires a 'request_logs' table in Supabase
     const { count, error } = await supabase
       .from('request_logs')
       .select('*', { count: 'exact', head: true })
@@ -25,8 +26,8 @@ export async function checkRateLimit(userId: string, action: 'chat' | 'quiz_gene
       .gte('created_at', windowStart);
 
     if (error) {
-      console.error("Rate limit check failed (DB error):", error);
-      // Fail OPEN: If DB is down, let users through to avoid blocking legitimate traffic during outages
+      // Fail OPEN (allow request) if DB is down/missing to prevent blocking users
+      console.error("Rate limit check failed (DB error):", error.message);
       return true; 
     }
 
@@ -37,7 +38,7 @@ export async function checkRateLimit(userId: string, action: 'chat' | 'quiz_gene
       return false; 
     }
 
-    // 2. Log this request (Fire and forget)
+    // Log request (Fire and forget - don't await)
     supabase.from('request_logs').insert({
       user_id: userId,
       endpoint: action

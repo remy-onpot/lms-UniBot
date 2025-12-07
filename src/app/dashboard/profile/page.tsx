@@ -61,36 +61,54 @@ export default function ProfilePage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return router.push('/login');
 
-      try {
-        // Fetch all data in parallel for speed
-        const [userRes, shopRes, interestsRes, statsRes] = await Promise.all([
-          supabase.from('users').select('*').eq('id', user.id).single(),
-          GamificationService.getShopItems(),
-          GamificationService.getAvailableInterests(),
-          GamificationService.getWeeklyStats(user.id)
-        ]);
+      // 1. CRITICAL: Fetch User Profile First
+      // If this fails, we really can't show the page.
+      const { data: userProfile, error: userError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', user.id)
+        .single();
 
-        if (userRes.data) {
-          setProfile(userRes.data);
-          setFormData({
-            full_name: userRes.data.full_name || '',
-            phone_number: userRes.data.phone_number || '',
-            bio: userRes.data.bio || '',
-            email: user.email || ''
-          });
-        }
-        
-        if (shopRes) setShopItems(shopRes);
-        if (interestsRes) setAvailableInterests(interestsRes);
-        if (statsRes) setWeeklyActivity(statsRes);
-        
-      } catch (error) {
-        console.error("Failed to load profile data", error);
-        toast.error("Failed to load some profile data");
-      } finally {
+      if (userError || !userProfile) {
+        toast.error("Failed to load user profile");
         setLoading(false);
+        return;
+      }
+
+      // Set profile immediately so UI can render
+      setProfile(userProfile as UserProfile);
+      setFormData({
+        full_name: userProfile.full_name || '',
+        phone_number: userProfile.phone_number || '',
+        bio: userProfile.bio || '',
+        email: user.email || ''
+      });
+      setLoading(false); // Stop spinner here!
+
+      // 2. NON-CRITICAL: Fetch extras in background
+      // If these fail, we just log it, we don't crash the page.
+      try {
+        const shopRes = await GamificationService.getShopItems();
+        if (shopRes) setShopItems(shopRes);
+      } catch (e) {
+        console.warn("Shop items failed to load (Check DB Policies)", e);
+      }
+
+      try {
+        const interestsRes = await GamificationService.getAvailableInterests();
+        if (interestsRes) setAvailableInterests(interestsRes);
+      } catch (e) {
+        console.warn("Interests failed to load (Check DB Policies)", e);
+      }
+
+      try {
+        const statsRes = await GamificationService.getWeeklyStats(user.id);
+        if (statsRes) setWeeklyActivity(statsRes);
+      } catch (e) {
+        console.warn("Stats failed to load (Check 'metadata' column)", e);
       }
     };
+
     init();
   }, [router]);
 
@@ -108,12 +126,9 @@ export default function ProfilePage() {
       if (error) throw error;
       
       toast.success('Updated successfully');
+      // Optional chaining for face in case context is missing
       face?.pulse('happy', 900, { event: 'profile_save', field });
-      await FaceAnalyticsService.recordFaceEvent({
-        eventType: 'profile_update',
-        faceState: 'happy',
-        metadata: { field }
-      });
+      
       setEditMode({ ...editMode, [field]: false });
       
       // Optimistic update
@@ -121,8 +136,6 @@ export default function ProfilePage() {
       
     } catch (e: any) {
       toast.error(e.message);
-      face?.pulse('sad', 1400, { event: 'profile_save_error', field });
-      await FaceAnalyticsService.logError('profile_save', e);
     }
   };
 
@@ -141,15 +154,8 @@ export default function ProfilePage() {
       setProfile({ ...profile, avatar_url: publicUrl });
       toast.success('Avatar updated!');
       face?.pulse('happy', 900, { event: 'avatar_upload' });
-      await FaceAnalyticsService.recordFaceEvent({
-        eventType: 'avatar_uploaded',
-        faceState: 'happy',
-        metadata: { file_name: file.name }
-      });
     } catch (e: any) {
       toast.error(e.message);
-      face?.pulse('sad', 1200, { event: 'avatar_upload_error' });
-      await FaceAnalyticsService.logError('avatar_upload', e);
     } finally {
       setUploading(false);
     }
@@ -173,11 +179,8 @@ export default function ProfilePage() {
       setProfile({ ...profile, gems: res.newGems, owned_frames: res.newOwned });
       toast.success(`Purchased ${item.name}!`);
       face?.pulse('happy', 900, { event: 'shop_purchase', item: item.name });
-      await FaceAnalyticsService.logShopPurchase(item.name, item.cost);
     } catch (e: any) {
       toast.error(e.message);
-      face?.pulse('sad', 1200, { event: 'shop_purchase_error' });
-      await FaceAnalyticsService.logError('shop_purchase', e);
     }
   };
 
@@ -188,15 +191,8 @@ export default function ProfilePage() {
       setProfile({ ...profile, profile_frame: item.id });
       toast.success('Frame equipped!');
       face?.pulse('happy', 800, { event: 'frame_equipped', item: item.name });
-      await FaceAnalyticsService.recordFaceEvent({
-        eventType: 'frame_equipped',
-        faceState: 'happy',
-        metadata: { item_name: item.name }
-      });
     } catch (e: any) {
       toast.error(e.message);
-      face?.pulse('sad', 1200, { event: 'frame_equip_error' });
-      await FaceAnalyticsService.logError('frame_equip', e);
     }
   };
 
@@ -208,19 +204,31 @@ export default function ProfilePage() {
   const handleCancel = (field: string) => {
     setEditMode({ ...editMode, [field]: false });
   };
-  if (loading || !profile) return (
+
+  // Safe Checks for profile data
+  if (loading) return (
     <div className="flex h-screen items-center justify-center bg-slate-50">
       <Loader2 className="w-10 h-10 animate-spin text-indigo-600" />
     </div>
   );
 
+  if (!profile) return (
+    <div className="flex h-screen items-center justify-center bg-slate-50">
+      <div className="text-center">
+        <h3 className="text-xl font-bold">Profile Not Found</h3>
+        <Button onClick={() => window.location.reload()} className="mt-4">Retry</Button>
+      </div>
+    </div>
+  );
+
   // Calculations
-  const level = Math.floor(profile.xp / 1000) + 1;
+  const currentXp = profile.xp || 0;
+  const level = Math.floor(currentXp / 1000) + 1;
   const xpForNextLevel = 1000;
-  const currentLevelXp = profile.xp % 1000;
+  const currentLevelXp = currentXp % 1000;
   
   // Chart Scaling
-  const maxXp = Math.max(...weeklyActivity.map(d => d.xp), 100); 
+  const maxXp = weeklyActivity.length > 0 ? Math.max(...weeklyActivity.map(d => d.xp), 100) : 100; 
   const activeFrame = shopItems.find(i => i.id === profile.profile_frame);
   const frameClass = activeFrame ? activeFrame.asset_value : 'border-slate-200';
 
@@ -286,11 +294,11 @@ export default function ProfilePage() {
                   </div>
                   <div className="flex items-center gap-2 bg-orange-50 px-3 py-1.5 rounded-lg border border-orange-100">
                     <Flame className="w-4 h-4 text-orange-600" />
-                    <span className="font-bold text-orange-900 text-sm">{profile.current_streak} Day Streak</span>
+                    <span className="font-bold text-orange-900 text-sm">{profile.current_streak || 0} Day Streak</span>
                   </div>
                   <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100">
                     <span className="text-sm">💎</span>
-                    <span className="font-bold text-blue-900 text-sm">{profile.gems} Gems</span>
+                    <span className="font-bold text-blue-900 text-sm">{profile.gems || 0} Gems</span>
                   </div>
                 </div>
               </div>
@@ -327,7 +335,7 @@ export default function ProfilePage() {
                 className={`flex items-center gap-2 flex-1 min-w-[120px] px-6 py-4 font-bold text-sm transition ${
                   activeTab === tab.id
                     ? 'bg-slate-50 text-indigo-600 border-b-2 border-indigo-600'
-                    : 'text-gray-500 hover:bg-gray-50'
+                    : 'text-gray-500 hover:text-gray-800'
                 }`}
               >
                 <tab.icon className="w-4 h-4" />
@@ -420,29 +428,33 @@ export default function ProfilePage() {
             <div className="bg-white rounded-2xl shadow-lg p-6 border border-slate-100">
                <div className="flex justify-between items-center mb-6">
                   <h3 className="text-lg font-bold text-gray-900">Frame Shop</h3>
-                  <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">Balance: 💎 {profile.gems}</span>
+                  <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">Balance: 💎 {profile.gems || 0}</span>
                </div>
-               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {shopItems.map(item => {
-                    const isOwned = profile.owned_frames?.includes(item.id);
-                    const isEquipped = profile.profile_frame === item.id;
-                    return (
-                      <div key={item.id} className={`p-4 rounded-xl border-2 text-center transition ${isEquipped ? 'border-indigo-500 bg-indigo-50' : 'border-slate-100 hover:border-indigo-200'}`}>
-                         <div className={`w-16 h-16 rounded-full mx-auto mb-3 bg-slate-200 ${item.asset_value}`}></div>
-                         <h4 className="font-bold text-gray-900 text-sm">{item.name}</h4>
-                         <p className="text-xs text-gray-500 mb-3">{item.cost === 0 ? 'Free' : `💎 ${item.cost}`}</p>
-                         
-                         {isEquipped ? (
-                           <span className="text-xs font-bold text-indigo-600 block py-1.5">Equipped</span>
-                         ) : isOwned ? (
-                           <Button onClick={() => handleEquipFrame(item)} variant="outline" size="sm" className="w-full">Equip</Button>
-                         ) : (
-                           <Button onClick={() => handleBuyItem(item)} disabled={profile.gems < item.cost} variant="primary" size="sm" className="w-full">Buy</Button>
-                         )}
-                      </div>
-                    );
-                  })}
-               </div>
+               {shopItems.length === 0 ? (
+                 <p className="text-center text-gray-500 italic py-10">The shop is currently closed (Database connection error).</p>
+               ) : (
+                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {shopItems.map(item => {
+                      const isOwned = profile.owned_frames?.includes(item.id);
+                      const isEquipped = profile.profile_frame === item.id;
+                      return (
+                        <div key={item.id} className={`p-4 rounded-xl border-2 text-center transition ${isEquipped ? 'border-indigo-500 bg-indigo-50' : 'border-slate-100 hover:border-indigo-200'}`}>
+                           <div className={`w-16 h-16 rounded-full mx-auto mb-3 bg-slate-200 ${item.asset_value}`}></div>
+                           <h4 className="font-bold text-gray-900 text-sm">{item.name}</h4>
+                           <p className="text-xs text-gray-500 mb-3">{item.cost === 0 ? 'Free' : `💎 ${item.cost}`}</p>
+                           
+                           {isEquipped ? (
+                             <span className="text-xs font-bold text-indigo-600 block py-1.5">Equipped</span>
+                           ) : isOwned ? (
+                             <Button onClick={() => handleEquipFrame(item)} variant="outline" size="sm" className="w-full">Equip</Button>
+                           ) : (
+                             <Button onClick={() => handleBuyItem(item)} disabled={(profile.gems || 0) < item.cost} variant="primary" size="sm" className="w-full">Buy</Button>
+                           )}
+                        </div>
+                      );
+                    })}
+                 </div>
+               )}
             </div>
           )}
 
@@ -451,22 +463,26 @@ export default function ProfilePage() {
             <div className="bg-white rounded-2xl shadow-lg p-6 border border-slate-100">
                <h3 className="text-lg font-bold text-gray-900 mb-2">Learning Interests</h3>
                <p className="text-gray-500 text-sm mb-6">Select topics to personalize your AI content.</p>
-               <div className="flex flex-wrap gap-3">
-                  {availableInterests.map(interest => (
-                    <button
-                      key={interest.name}
-                      onClick={() => toggleInterest(interest.name)}
-                      className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all border-2 flex items-center gap-2 ${
-                        profile.interests?.includes(interest.name)
-                          ? 'border-indigo-500 bg-indigo-50 text-indigo-700 shadow-sm'
-                          : 'border-slate-100 bg-white text-slate-500 hover:border-slate-300'
-                      }`}
-                    >
-                      <span>{interest.emoji}</span>
-                      {interest.name}
-                    </button>
-                  ))}
-               </div>
+               {availableInterests.length === 0 ? (
+                 <p className="text-center text-gray-500 italic py-10">No interests found (Database connection error).</p>
+               ) : (
+                 <div className="flex flex-wrap gap-3">
+                    {availableInterests.map(interest => (
+                      <button
+                        key={interest.name}
+                        onClick={() => toggleInterest(interest.name)}
+                        className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all border-2 flex items-center gap-2 ${
+                          profile.interests?.includes(interest.name)
+                            ? 'border-indigo-500 bg-indigo-50 text-indigo-700 shadow-sm'
+                            : 'border-slate-100 bg-white text-slate-500 hover:border-slate-300'
+                        }`}
+                      >
+                        <span>{interest.emoji}</span>
+                        {interest.name}
+                      </button>
+                    ))}
+                 </div>
+               )}
             </div>
           )}
 
@@ -478,13 +494,13 @@ export default function ProfilePage() {
                       <div className="flex items-center gap-2 mb-1 text-slate-400">
                          <BookOpen className="w-4 h-4" /> <span className="text-xs font-bold uppercase">Total XP</span>
                       </div>
-                      <p className="text-2xl font-black text-indigo-600">{profile.xp.toLocaleString()}</p>
+                      <p className="text-2xl font-black text-indigo-600">{(profile.xp || 0).toLocaleString()}</p>
                    </div>
                    <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
                       <div className="flex items-center gap-2 mb-1 text-slate-400">
                          <Flame className="w-4 h-4" /> <span className="text-xs font-bold uppercase">Streak</span>
                       </div>
-                      <p className="text-2xl font-black text-orange-600">{profile.current_streak} Days</p>
+                      <p className="text-2xl font-black text-orange-600">{profile.current_streak || 0} Days</p>
                    </div>
                    <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
                       <div className="flex items-center gap-2 mb-1 text-slate-400">
@@ -499,25 +515,31 @@ export default function ProfilePage() {
                 {/* Weekly Chart */}
                 <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
                    <h3 className="text-lg font-bold text-gray-900 mb-6">Activity (Last 7 Days)</h3>
-                   <div className="flex items-end justify-between gap-2 h-48">
-                      {weeklyActivity.map((day, idx) => (
-                        <div key={idx} className="flex-1 flex flex-col items-center gap-2 group">
-                          <div className="relative flex-1 w-full flex items-end">
-                            <div 
-                              className="w-full bg-indigo-100 rounded-t-lg transition-all duration-500 group-hover:bg-indigo-600"
-                              style={{ height: `${(day.xp / maxXp) * 100}%` }}
-                            >
-                               {/* Tooltip */}
-                               <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-gray-900 text-white text-xs py-1 px-2 rounded whitespace-nowrap z-10 shadow-lg">
-                                   <p className="font-bold">{day.xp} XP</p>
-                                   <p className="opacity-80">{day.hours} hrs</p>
-                               </div>
+                   {weeklyActivity.length === 0 ? (
+                     <div className="flex h-48 items-center justify-center text-gray-400 text-sm">
+                       No activity data available yet.
+                     </div>
+                   ) : (
+                     <div className="flex items-end justify-between gap-2 h-48">
+                        {weeklyActivity.map((day, idx) => (
+                          <div key={idx} className="flex-1 flex flex-col items-center gap-2 group">
+                            <div className="relative flex-1 w-full flex items-end">
+                              <div 
+                                className="w-full bg-indigo-100 rounded-t-lg transition-all duration-500 group-hover:bg-indigo-600"
+                                style={{ height: `${(day.xp / maxXp) * 100}%` }}
+                              >
+                                 {/* Tooltip */}
+                                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-gray-900 text-white text-xs py-1 px-2 rounded whitespace-nowrap z-10 shadow-lg">
+                                     <p className="font-bold">{day.xp} XP</p>
+                                     <p className="opacity-80">{day.hours} hrs</p>
+                                 </div>
+                              </div>
                             </div>
+                            <p className="text-xs font-bold text-gray-400">{day.day}</p>
                           </div>
-                          <p className="text-xs font-bold text-gray-400">{day.day}</p>
-                        </div>
-                      ))}
-                   </div>
+                        ))}
+                     </div>
+                   )}
                 </div>
              </div>
           )}

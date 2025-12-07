@@ -1,5 +1,3 @@
-// src/app/api/grade-assignment/route.ts
-
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
 import { env } from '@/lib/env';
@@ -11,16 +9,14 @@ import { checkRateLimit } from "@/lib/rate-limit";
 
 const genAI = new GoogleGenerativeAI(env.GOOGLE_GENERATIVE_AI_API_KEY || "");
 
-// ✅ Define Validation Schema
 const gradingSchema = z.object({
   assignmentTitle: z.string().min(1).max(200),
   assignmentDescription: z.string().min(1).max(2000),
-  studentText: z.string().min(20, "Submission is too short to grade").max(100000, "Submission too large"),
+  studentText: z.string().min(20).max(100000),
   maxPoints: z.number().int().min(1).max(1000),
 });
 
 function extractJSON(text: string): AIGradedResponse {
-  // ... (Existing JSON extraction helper logic)
   try {
     return JSON.parse(text) as AIGradedResponse;
   } catch {
@@ -47,8 +43,6 @@ export async function POST(req: Request) {
     if (!isAllowed) throw new AppError("Rate limit exceeded.", 429);
 
     const body = await req.json();
-    
-    // ✅ Validate Input
     const { assignmentTitle, assignmentDescription, studentText, maxPoints } = gradingSchema.parse(body);
 
     const prompt = `
@@ -72,8 +66,9 @@ export async function POST(req: Request) {
       }
     `;
 
+    // ✅ FIX: Use Gemini 2.5 Flash
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash-exp",
+      model: "gemini-2.5-flash",
       generationConfig: { responseMimeType: "application/json" }
     });
 
