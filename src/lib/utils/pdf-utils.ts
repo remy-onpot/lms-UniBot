@@ -13,41 +13,44 @@ export interface PDFExtractionResult {
 
 export const extractDataFromPDF = async (file: File): Promise<PDFExtractionResult> => {
   try {
-    // Dynamic import prevents server-side rendering crashes
+    // 1. Dynamic Import (Prevents SSR crashes)
     const pdfjsLib = await import('pdfjs-dist');
-    
-    // Ensure the worker is correctly loaded from your public folder
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `/pdf.worker.min.mjs`;
 
+    // 2. Worker Configuration
+    // We point to the file we just copied to /public
+    // Using window.location.origin ensures it works on localhost AND production
+    if (typeof window !== 'undefined') {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `${window.location.origin}/pdf.worker.min.mjs`;
+    }
+
+    // 3. Load Document
     const arrayBuffer = await file.arrayBuffer();
+    // @ts-ignore - mismatch in type definitions often happens with pdfjs-dist
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     
     let fullText = "";
     const pages: PDFPage[] = [];
     
-    // Limit parsing to avoid browser crashes on massive files
-    // You can increase this if needed, but 100 is a safe upper bound for client-side
-    const maxPages = Math.min(pdf.numPages, 100); 
+    // Limit to 50 pages for performance/cost safety
+    const maxPages = Math.min(pdf.numPages, 50); 
     
     for (let i = 1; i <= maxPages; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
       
-      // Extract text items and join them with spaces
-      // @ts-ignore: pdfjs-dist types mismatch fix
-      const rawText = textContent.items.map((item: any) => item.str).join(' ');
+      // Extract and clean text
+      const rawText = textContent.items
+        // @ts-ignore
+        .map((item: any) => item.str)
+        .join(' ');
       
-      // Clean up extra whitespace but keep structure
       const cleanText = rawText.replace(/\s+/g, ' ').trim();
 
       if (cleanText.length > 0) {
-        // 1. Store structured page data
         pages.push({
           pageNumber: i,
           text: cleanText
         });
-
-        // 2. Build full text for legacy support
         fullText += `\n--- Page ${i} ---\n${cleanText}`;
       }
     }
@@ -58,16 +61,15 @@ export const extractDataFromPDF = async (file: File): Promise<PDFExtractionResul
       pageCount: pdf.numPages
     };
 
-  } catch (e) { 
+  } catch (e: any) { 
       console.error("PDF Extraction Error:", e);
-      // Return empty structure on fail to prevent UI crash
+      // Return safer empty object instead of crashing UI
       return { fullText: "", pages: [], pageCount: 0 }; 
   }
 };
 
 /**
- * Legacy wrapper to keep existing components working without refactoring everything.
- * It simply returns the full string as before.
+ * Legacy wrapper for backward compatibility
  */
 export const extractTextFromPDF = async (file: File): Promise<string> => {
   const result = await extractDataFromPDF(file);

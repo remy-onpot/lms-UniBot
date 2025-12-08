@@ -2,7 +2,12 @@
 import { useRouter } from 'next/navigation';
 import { UserProfile } from '@/types';
 import { UniBotFace } from '@/components/ui/UniBotFace';
-import { Flame, Trophy, BookOpen, ChevronRight } from 'lucide-react';
+import { 
+  Flame, Trophy, BookOpen, ChevronRight, Zap, Target, 
+  Sparkles, Award, ShoppingBag, ArrowRight, Clock, CreditCard
+} from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { useFace } from '@/components/ui/FaceProvider';
 
 interface StudentDashboardProps {
   profile: UserProfile;
@@ -11,110 +16,182 @@ interface StudentDashboardProps {
 
 export function StudentDashboard({ profile, courses }: StudentDashboardProps) {
   const router = useRouter();
+  const face = useFace(); 
+  const [selectedFilter, setSelectedFilter] = useState('all');
+  const [greeting, setGreeting] = useState('');
+
+  // --- Dynamic Greeting Engine ---
+  useEffect(() => {
+    const getGreeting = () => {
+      const hour = new Date().getHours();
+      const name = profile.full_name.split(' ')[0];
+      const random = Math.random();
+
+      if (hour < 5) return `Still awake, ${name}? 🌙`;
+      if (hour < 12) return random > 0.5 ? `Good morning, ${name}! ☀️` : `Ready to learn, ${name}? ☕`;
+      if (hour < 17) return random > 0.5 ? `Good afternoon, ${name}. 👋` : `Keep the momentum going! 🚀`;
+      if (hour < 22) return `Good evening, ${name}. 🌇`;
+      return `Wrapping up for the day? 💤`;
+    };
+    setGreeting(getGreeting());
+  }, [profile.full_name]);
+
+  const level = Math.floor(profile.xp / 1000) + 1;
+  const xpProgress = (profile.xp % 1000) / 1000 * 100;
+
+  const filteredCourses = selectedFilter === 'all' 
+    ? courses 
+    : courses.filter(c => selectedFilter === 'active' ? c.quizCount > 0 || c.assignmentCount > 0 : false);
 
   return (
-    <div className="space-y-6 md:space-y-8 pb-24 md:pb-10"> {/* Extra padding for bottom nav */}
+    <div className="min-h-screen bg-slate-50 pb-24 md:pb-10 relative font-sans">
       
-      {/* 1. Hero / Status Section */}
-      <section className="bg-white p-5 md:p-8 rounded-3xl shadow-sm border border-slate-100 flex items-center justify-between relative overflow-hidden">
-        <div className="relative z-10">
-          <h1 className="text-xl md:text-3xl font-black text-slate-900 tracking-tight">
-            Hi, {profile.full_name.split(' ')[0]}! 👋
-          </h1>
-          <p className="text-slate-500 text-xs md:text-sm mt-1 font-medium">Let's keep that streak alive.</p>
-          
-          <div className="flex gap-3 mt-4">
-             <div className="flex items-center gap-1.5 bg-orange-50 px-3 py-1.5 rounded-full border border-orange-100 shadow-sm">
-                <Flame className="w-4 h-4 text-orange-500 fill-orange-500" />
-                <span className="font-black text-orange-700 text-xs md:text-sm">{profile.current_streak}</span>
-             </div>
-             <div className="flex items-center gap-1.5 bg-yellow-50 px-3 py-1.5 rounded-full border border-yellow-100 shadow-sm">
-                <Trophy className="w-4 h-4 text-yellow-600" />
-                <span className="font-black text-yellow-700 text-xs md:text-sm">{profile.xp} XP</span>
-             </div>
+      {/* --- TOP RIGHT ACTIONS --- */}
+      <div className="absolute top-6 right-6 z-50 flex items-center gap-3">
+         {/* Simple Shop Button */}
+         <button 
+           onClick={() => router.push('/dashboard/shop')}
+           className="flex items-center gap-2 bg-white/90 backdrop-blur-md px-4 py-2.5 rounded-full shadow-sm border border-slate-200 hover:scale-105 transition-transform group"
+         >
+            <ShoppingBag className="w-4 h-4 text-purple-600" />
+            <span className="text-xs font-bold text-slate-600 group-hover:text-purple-700">Store</span>
+            <span className="text-xs font-medium text-slate-400">|</span>
+            <div className="flex items-center gap-1">
+               <Sparkles className="w-3 h-3 text-blue-500" />
+               <span className="text-xs font-black text-slate-800">{profile.gems}</span>
+            </div>
+         </button>
+      </div>
+
+      {/* --- HERO SECTION (UniBot Speaking) --- */}
+      <div className="relative bg-white pt-24 pb-16 px-6 md:px-10 rounded-b-[3rem] shadow-sm border-b border-slate-200 overflow-hidden">
+        <div className="absolute top-0 right-0 w-96 h-96 bg-linear-to-br from-indigo-50 to-purple-50 rounded-full blur-3xl -mr-32 -mt-32 opacity-70"></div>
+        
+        <div className="max-w-7xl mx-auto relative z-10">
+          <div className="flex flex-col md:flex-row items-start gap-6">
+            
+            {/* 🤖 UniBot Avatar */}
+            <div className="shrink-0 relative">
+               <div className="w-20 h-20 md:w-24 md:h-24 rounded-3xl overflow-hidden shadow-xl border-4 border-white bg-indigo-50 relative z-10">
+                  <UniBotFace size="md" state="happy" />
+               </div>
+               {/* Decorative Ring */}
+               <div className="absolute -inset-2 bg-linear-to-br from-indigo-500 to-purple-500 rounded-4xl opacity-20 blur-md"></div>
+               {/* Level Badge */}
+               <div className="absolute -bottom-3 -right-3 z-20 bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded-lg border-2 border-white shadow-md">
+                 Lvl {level}
+               </div>
+            </div>
+
+            {/* 💬 Speech Bubble (Greeting) */}
+            <div className="flex-1">
+              <div className="relative bg-slate-50 border border-slate-100 p-5 rounded-2xl rounded-tl-none shadow-sm max-w-xl">
+                 <h1 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight leading-tight">
+                   {greeting}
+                 </h1>
+                 <p className="text-slate-500 font-medium mt-1 text-sm">
+                   You're on a <span className="text-orange-500 font-bold">{profile.current_streak} day streak!</span> Keep it up.
+                 </p>
+                 {/* Progress Bar Inside Bubble */}
+                 <div className="mt-4 flex items-center gap-3">
+                    <div className="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden">
+                       <div className="h-full bg-linear-to-r from-indigo-500 to-purple-500 w-[45%] relative rounded-full" style={{ width: `${xpProgress}%` }}></div>
+                    </div>
+                    <span className="text-[10px] font-bold text-slate-400">{Math.round(xpProgress)}% to Lvl {level+1}</span>
+                 </div>
+              </div>
+            </div>
           </div>
         </div>
-        
-        {/* The "Virtual Pet" Bot */}
-        <div className="relative shrink-0">
-           <div className="w-20 h-20 md:w-28 md:h-28">
-              <UniBotFace size="md" state="happy" className="w-full h-full" />
-           </div>
-           <div className="absolute -bottom-2 -right-2 bg-blue-600 text-white text-[10px] font-bold px-2 py-1 rounded-full border-2 border-white shadow-sm">
-             Lvl {Math.floor(profile.xp / 1000) + 1}
-           </div>
-        </div>
-      </section>
+      </div>
 
-      {/* 2. Daily Workout Card */}
-      <section 
-        onClick={() => router.push('/dashboard/daily-quiz')}
-        className="cursor-pointer group relative overflow-hidden bg-linear-to-r from-indigo-600 to-purple-600 rounded-3xl p-6 text-white shadow-xl shadow-indigo-200 transition-transform active:scale-[0.98]"
-      >
-         <div className="relative z-10 flex justify-between items-center">
-            <div>
-               <h2 className="text-lg md:text-2xl font-bold mb-1">Daily Workout</h2>
-               <p className="text-indigo-100 text-xs md:text-sm font-medium">3 questions • 5 mins • +50 XP</p>
-               <button className="mt-4 bg-white text-indigo-600 px-4 py-2 rounded-xl font-bold text-xs md:text-sm hover:bg-indigo-50 transition shadow-md">
-                 Start Now
-               </button>
-            </div>
-            <div className="bg-white/10 p-3 md:p-4 rounded-full backdrop-blur-sm">
-               <Trophy className="w-8 h-8 md:w-10 md:h-10 text-yellow-300" />
-            </div>
-         </div>
-      </section>
-
-      {/* 3. My Courses (Grid) */}
-      <section id="my-courses" className="scroll-mt-20"> {/* ID for anchor link */}
-        <div className="flex justify-between items-center mb-4 px-1">
-           <h3 className="font-bold text-slate-900 text-lg md:text-xl">My Courses</h3>
-        </div>
+      <div className="max-w-7xl mx-auto px-6 md:px-10 -mt-10 relative z-20 space-y-8">
         
-        {courses.length === 0 ? (
-           <div className="text-center p-10 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
-              <BookOpen className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-              <p className="text-slate-500 text-sm font-medium">You haven't joined any classes yet.</p>
-              <button onClick={() => window.location.reload()} className="text-blue-600 font-bold text-sm mt-2 hover:underline">Refresh or Ask Course Rep</button>
-           </div>
-        ) : (
-           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-             {courses.map((course) => (
-               <div 
-                 key={course.id} 
-                 onClick={() => router.push(`/dashboard/courses/${course.id}`)}
-                 className="group bg-white p-5 rounded-2xl border border-slate-100 shadow-sm hover:shadow-md hover:border-blue-200 active:scale-[0.98] transition cursor-pointer flex flex-col justify-between"
-               >
-                 <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center shrink-0">
-                       <BookOpen className="w-6 h-6" />
-                    </div>
-                    <div className="min-w-0">
-                       <h4 className="font-bold text-slate-900 text-sm md:text-base truncate pr-2">{course.title}</h4>
-                       <p className="text-xs text-slate-500 font-medium truncate">{course.className}</p>
-                    </div>
-                 </div>
-                 
-                 <div className="mt-4 pt-3 border-t border-slate-50 flex justify-between items-center">
-                    <div className="flex gap-2">
-                      {course.quizCount > 0 && (
-                          <span className="text-[10px] bg-green-50 text-green-700 px-2 py-1 rounded-md font-bold border border-green-100">
-                             {course.quizCount} Quiz
-                          </span>
-                      )}
-                      {course.assignmentCount > 0 && (
-                          <span className="text-[10px] bg-purple-50 text-purple-700 px-2 py-1 rounded-md font-bold border border-purple-100">
-                             {course.assignmentCount} Assign.
-                          </span>
-                      )}
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-blue-500 transition" />
-                 </div>
+        {/* --- DAILY WORKOUT --- */}
+        <div 
+           onClick={() => router.push('/dashboard/daily-quiz')}
+           className="group bg-linear-to-br from-slate-900 to-slate-800 rounded-3xl p-6 md:p-8 text-white shadow-2xl cursor-pointer relative overflow-hidden transition-transform active:scale-[0.99] border border-slate-700/50"
+        >
+            <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
+            
+            <div className="flex justify-between items-center relative z-10">
+               <div>
+                  <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md px-3 py-1 rounded-lg text-xs font-bold mb-3 border border-white/10">
+                     <Clock className="w-3 h-3" /> 5 Mins
+                  </div>
+                  <h3 className="text-xl md:text-2xl font-black mb-1">Daily Brain Workout</h3>
+                  <p className="text-slate-400 text-sm font-medium mb-4">Earn +50 XP and keep your streak alive!</p>
+                  
+                  <button className="bg-white text-slate-900 px-5 py-2.5 rounded-xl font-bold text-xs md:text-sm hover:bg-indigo-50 transition flex items-center gap-2">
+                     Start Quiz <ArrowRight className="w-4 h-4" />
+                  </button>
                </div>
-             ))}
+               <Trophy className="w-20 h-20 md:w-24 md:h-24 text-yellow-400 drop-shadow-lg rotate-12 group-hover:rotate-0 transition-transform duration-500" />
+            </div>
+        </div>
+
+        {/* --- COURSES SECTION --- */}
+        <div id="my-courses">
+           <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+              <h2 className="text-xl font-black text-slate-900 flex items-center gap-2">
+                <BookOpen className="w-6 h-6 text-indigo-600" />
+                My Courses
+              </h2>
+              
+              <div className="flex items-center gap-2">
+                 {/* ✅ MANAGE ACCESS BUTTON */}
+                 <button 
+                   onClick={() => router.push('/dashboard/student-billing')}
+                   className="flex items-center gap-1.5 px-4 py-2 bg-yellow-50 text-yellow-700 text-xs font-bold rounded-xl border border-yellow-200 hover:bg-yellow-100 transition"
+                 >
+                    <CreditCard className="w-3.5 h-3.5" />
+                    Manage Access
+                 </button>
+
+                 <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
+                    <button onClick={() => setSelectedFilter('all')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${selectedFilter === 'all' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-900'}`}>All</button>
+                    <button onClick={() => setSelectedFilter('active')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${selectedFilter === 'active' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-900'}`}>Active</button>
+                 </div>
+              </div>
            </div>
-        )}
-      </section>
+
+           {courses.length === 0 ? (
+              <div className="bg-white rounded-3xl border-2 border-dashed border-slate-200 p-12 text-center">
+                 <BookOpen className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                 <h3 className="text-lg font-bold text-slate-900">No courses yet</h3>
+                 <p className="text-slate-500 text-sm mt-1 mb-4">Join a class to start learning.</p>
+                 <button onClick={() => window.location.reload()} className="text-indigo-600 font-bold text-sm hover:underline">Refresh</button>
+              </div>
+           ) : (
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                 {filteredCourses.map(course => (
+                    <div 
+                      key={course.id}
+                      onClick={() => router.push(`/dashboard/courses/${course.id}`)}
+                      className="group bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-lg hover:border-indigo-200 transition-all cursor-pointer relative overflow-hidden"
+                    >
+                       <div className="absolute top-0 right-0 w-20 h-20 bg-indigo-50 rounded-bl-full -mr-4 -mt-4 transition-colors group-hover:bg-indigo-100"></div>
+
+                       <div className="flex items-start gap-4 mb-4 relative z-10">
+                          <div className="w-12 h-12 bg-linear-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform shadow-md">
+                             <span className="text-white font-black text-lg">{course.title.charAt(0)}</span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                             <h4 className="font-bold text-slate-900 line-clamp-1 group-hover:text-indigo-600 transition-colors">{course.title}</h4>
+                             <p className="text-xs text-slate-500 font-medium truncate">{course.className}</p>
+                          </div>
+                       </div>
+                       
+                       <div className="flex gap-2 relative z-10">
+                          {course.quizCount > 0 && <span className="bg-green-50 text-green-700 px-2 py-1 rounded text-[10px] font-bold border border-green-100 flex items-center gap-1"><Target className="w-3 h-3"/> {course.quizCount} Quizzes</span>}
+                          {course.assignmentCount > 0 && <span className="bg-purple-50 text-purple-700 px-2 py-1 rounded text-[10px] font-bold border border-purple-100 flex items-center gap-1"><BookOpen className="w-3 h-3"/> {course.assignmentCount} Tasks</span>}
+                       </div>
+                    </div>
+                 ))}
+              </div>
+           )}
+        </div>
+      </div>
     </div>
   );
 }

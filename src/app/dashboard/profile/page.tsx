@@ -2,141 +2,127 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
-import Image from 'next/image';
-import { Button } from '@/components/ui/Button';
 import { toast } from 'sonner';
-import { 
-  User, Edit2, Save, LogOut, Camera, ShoppingBag, 
-  Trophy, Flame, TrendingUp, Target, Loader2, BookOpen 
-} from 'lucide-react';
-import { X } from 'lucide-react';
-import { GamificationService } from '@/lib/services/gamification.service';
-import { FaceAnalyticsService } from '@/lib/services/face-analytics.service';
-import { useFace } from '@/components/ui/FaceProvider';
-import { UserProfile, ShopItem } from '@/types';
+import { ChevronRight, LogOut, TrendingUp, User, Target, Loader2, Trophy, GraduationCap } from 'lucide-react';
+import { GamificationService, Achievement } from '@/lib/services/gamification.service';
+import { UserProfile } from '@/types';
+import { Button } from '@/components/ui/Button';
 
-// Types for local state
-interface WeeklyStat {
-  day: string;
-  xp: number;
-  hours: number;
-}
-
-interface Interest {
-  name: string;
-  emoji: string;
-}
+// Feature Components
+import { ProfileHeader } from '@/components/features/profile/ProfileHeader';
+import { OverviewTab } from '@/components/features/profile/OverviewTab';
+import { EditProfileTab } from '@/components/features/profile/EditProfileTab';
+import { InterestsTab } from '@/components/features/profile/InterestsTab';
+import { AchievementsTab } from '@/components/features/profile/AchievementsTab';
 
 export default function ProfilePage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const face = useFace();
   
-  // --- STATE ---
+  // State
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0); // Trigger re-fetches
   
-  // Data State
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [shopItems, setShopItems] = useState<ShopItem[]>([]);
-  const [availableInterests, setAvailableInterests] = useState<Interest[]>([]);
-  const [weeklyActivity, setWeeklyActivity] = useState<WeeklyStat[]>([]);
+  const [availableInterests, setAvailableInterests] = useState<any[]>([]);
+  const [achievements, setAchievements] = useState<Achievement[]>([]);
   
-  // UI State
-  const [activeTab, setActiveTab] = useState('profile');
+  const [stats, setStats] = useState({
+    weeklyActivity: [] as any[],
+    totalHours: 0,
+    totalDays: 0,
+    assignmentsCompleted: 0,
+    assignmentsTotal: 0,
+    quizzesCompleted: 0,
+    quizzesTotal: 0
+  });
+  
+  const [activeTab, setActiveTab] = useState<'overview' | 'achievements' | 'profile' | 'interests'>('overview');
   const [editMode, setEditMode] = useState<Record<string, boolean>>({});
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   
-  // Editable Form Data
-  const [formData, setFormData] = useState({
-    full_name: '',
-    phone_number: '',
-    bio: '',
-    email: ''
-  });
+  const [formData, setFormData] = useState({ full_name: '', phone_number: '', bio: '', email: '' });
 
-  // --- INITIAL DATA FETCH ---
   useEffect(() => {
     const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return router.push('/login');
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return router.push('/login');
 
-      // 1. CRITICAL: Fetch User Profile First
-      // If this fails, we really can't show the page.
-      const { data: userProfile, error: userError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', user.id)
-        .single();
+        const { data: userProfile, error } = await supabase.from('users').select('*').eq('id', user.id).single();
+        if (error || !userProfile) {
+          toast.error("Failed to load profile");
+          return setLoading(false);
+        }
 
-      if (userError || !userProfile) {
-        toast.error("Failed to load user profile");
+        setProfile(userProfile as UserProfile);
+        setFormData({
+          full_name: userProfile.full_name || '',
+          phone_number: userProfile.phone_number || '',
+          bio: userProfile.bio || '',
+          email: user.email || ''
+        });
+
+        // Parallel Data Fetching
+        const [
+          interestsRes, 
+          gamificationStats, 
+          achievementList,
+          assignmentStats,
+          quizStats
+        ] = await Promise.all([
+          GamificationService.getAvailableInterests(),
+          GamificationService.getUserStats(user.id),
+          GamificationService.getAllAchievements(user.id),
+          
+          // Assignments
+          (async () => {
+             const { data: enrollments } = await supabase.from('class_enrollments').select('class_id').eq('student_id', user.id);
+             if (!enrollments?.length) return { total: 0, completed: 0 };
+             const classIds = enrollments.map(e => e.class_id);
+             const { count: total } = await supabase.from('assignments').select('id', { count: 'exact', head: true }).in('course_id', (await supabase.from('courses').select('id').in('class_id', classIds)).data?.map(c => c.id) || []);
+             const { count: completed } = await supabase.from('assignment_submissions').select('id', { count: 'exact', head: true }).eq('student_id', user.id);
+             return { total: total || 0, completed: completed || 0 };
+          })(),
+
+          // Quizzes
+          (async () => {
+             const { count: completed } = await supabase.from('quiz_results').select('id', { count: 'exact', head: true }).eq('student_id', user.id);
+             return { total: 50, completed: completed || 0 }; // Simplified total
+          })()
+        ]);
+
+        setAvailableInterests(interestsRes || []);
+        setAchievements(achievementList || []);
+        setStats({
+          weeklyActivity: gamificationStats.weeklyActivity,
+          totalHours: gamificationStats.totalHours,
+          totalDays: gamificationStats.totalDays,
+          assignmentsTotal: assignmentStats.total,
+          assignmentsCompleted: assignmentStats.completed,
+          quizzesTotal: quizStats.total,
+          quizzesCompleted: quizStats.completed
+        });
+
+      } catch (e) {
+        console.error("Profile load error:", e);
+        toast.error("Could not load data");
+      } finally {
         setLoading(false);
-        return;
-      }
-
-      // Set profile immediately so UI can render
-      setProfile(userProfile as UserProfile);
-      setFormData({
-        full_name: userProfile.full_name || '',
-        phone_number: userProfile.phone_number || '',
-        bio: userProfile.bio || '',
-        email: user.email || ''
-      });
-      setLoading(false); // Stop spinner here!
-
-      // 2. NON-CRITICAL: Fetch extras in background
-      // If these fail, we just log it, we don't crash the page.
-      try {
-        const shopRes = await GamificationService.getShopItems();
-        if (shopRes) setShopItems(shopRes);
-      } catch (e) {
-        console.warn("Shop items failed to load (Check DB Policies)", e);
-      }
-
-      try {
-        const interestsRes = await GamificationService.getAvailableInterests();
-        if (interestsRes) setAvailableInterests(interestsRes);
-      } catch (e) {
-        console.warn("Interests failed to load (Check DB Policies)", e);
-      }
-
-      try {
-        const statsRes = await GamificationService.getWeeklyStats(user.id);
-        if (statsRes) setWeeklyActivity(statsRes);
-      } catch (e) {
-        console.warn("Stats failed to load (Check 'metadata' column)", e);
       }
     };
-
     init();
-  }, [router]);
+  }, [router, refreshKey]);
 
-  // --- ACTIONS ---
-
-  const handleEdit = (field: string) => setEditMode({ ...editMode, [field]: true });
-  
   const handleSave = async (field: string) => {
     try {
-      const { error } = await supabase
-        .from('users')
-        .update({ [field]: (formData as any)[field] })
-        .eq('id', profile?.id);
-
+      const { error } = await supabase.from('users').update({ [field]: (formData as any)[field] }).eq('id', profile?.id);
       if (error) throw error;
-      
-      toast.success('Updated successfully');
-      // Optional chaining for face in case context is missing
-      face?.pulse('happy', 900, { event: 'profile_save', field });
-      
+      toast.success('Saved!');
       setEditMode({ ...editMode, [field]: false });
-      
-      // Optimistic update
       if (profile) setProfile({ ...profile, [field]: (formData as any)[field] });
-      
-    } catch (e: any) {
-      toast.error(e.message);
-    }
+    } catch (e: any) { toast.error(e.message); }
   };
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -144,418 +130,145 @@ export default function ProfilePage() {
     setUploading(true);
     try {
       const file = e.target.files[0];
-      const filePath = `${profile.id}/${Date.now()}.${file.name.split('.').pop()}`;
-      
-      await supabase.storage.from('avatars').upload(filePath, file);
-      const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(filePath);
-      
+      const path = `${profile.id}/${Date.now()}.png`;
+      await supabase.storage.from('avatars').upload(path, file);
+      const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(path);
       await supabase.from('users').update({ avatar_url: publicUrl }).eq('id', profile.id);
-      
       setProfile({ ...profile, avatar_url: publicUrl });
       toast.success('Avatar updated!');
-      face?.pulse('happy', 900, { event: 'avatar_upload' });
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setUploading(false);
-    }
+    } catch (e: any) { toast.error("Upload failed"); } 
+    finally { setUploading(false); }
   };
 
-  const toggleInterest = async (interest: string) => {
+  const handleToggleInterest = async (interestName: string) => {
     if (!profile) return;
     const current = profile.interests || [];
-    const updated = current.includes(interest) 
-      ? current.filter(i => i !== interest)
-      : [...current, interest];
-
-    setProfile({ ...profile, interests: updated });
+    const updated = current.includes(interestName) ? current.filter(i => i !== interestName) : [...current, interestName];
+    setProfile({ ...profile, interests: updated }); 
     await supabase.from('users').update({ interests: updated }).eq('id', profile.id);
   };
 
-  const handleBuyItem = async (item: ShopItem) => {
-    if (!profile) return;
-    try {
-      const res = await GamificationService.buyItem(profile.id, item.id);
-      setProfile({ ...profile, gems: res.newGems, owned_frames: res.newOwned });
-      toast.success(`Purchased ${item.name}!`);
-      face?.pulse('happy', 900, { event: 'shop_purchase', item: item.name });
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  };
+  const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
 
-  const handleEquipFrame = async (item: ShopItem) => {
-    if (!profile) return;
-    try {
-      await GamificationService.equipFrame(profile.id, item.id);
-      setProfile({ ...profile, profile_frame: item.id });
-      toast.success('Frame equipped!');
-      face?.pulse('happy', 800, { event: 'frame_equipped', item: item.name });
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  };
+  if (loading || !profile) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-indigo-600 w-8 h-8" /></div>;
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    router.push('/login');
-  };
-
-  const handleCancel = (field: string) => {
-    setEditMode({ ...editMode, [field]: false });
-  };
-
-  // Safe Checks for profile data
-  if (loading) return (
-    <div className="flex h-screen items-center justify-center bg-slate-50">
-      <Loader2 className="w-10 h-10 animate-spin text-indigo-600" />
-    </div>
-  );
-
-  if (!profile) return (
-    <div className="flex h-screen items-center justify-center bg-slate-50">
-      <div className="text-center">
-        <h3 className="text-xl font-bold">Profile Not Found</h3>
-        <Button onClick={() => window.location.reload()} className="mt-4">Retry</Button>
-      </div>
-    </div>
-  );
-
-  // Calculations
-  const currentXp = profile.xp || 0;
-  const level = Math.floor(currentXp / 1000) + 1;
-  const xpForNextLevel = 1000;
-  const currentLevelXp = currentXp % 1000;
-  
-  // Chart Scaling
-  const maxXp = weeklyActivity.length > 0 ? Math.max(...weeklyActivity.map(d => d.xp), 100) : 100; 
-  const activeFrame = shopItems.find(i => i.id === profile.profile_frame);
-  const frameClass = activeFrame ? activeFrame.asset_value : 'border-slate-200';
+  const level = Math.floor((profile.xp || 0) / 1000) + 1;
+  const currentLevelXp = (profile.xp || 0) % 1000;
+  const xpProgress = (currentLevelXp / 1000) * 100;
+  const maxXp = Math.max(...stats.weeklyActivity.map(d => d.xp), 100);
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans pb-20">
+    <div className="min-h-screen bg-slate-50 font-sans pb-24 md:pb-10">
       
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-20">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+      {/* Header Bar */}
+      <div className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
+        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+          <button onClick={() => router.back()} className="flex items-center gap-2 text-slate-500 hover:text-slate-900 font-bold text-sm">
+            <ChevronRight className="w-4 h-4 rotate-180" /> Back
+          </button>
           <div className="flex items-center gap-3">
-            <button onClick={() => router.back()} className="text-sm font-bold text-gray-500 hover:text-gray-900 transition">← Back</button>
-            <h1 className="text-xl font-bold text-gray-900">My Profile</h1>
+             {/* ✅ TRANSCRIPT BUTTON */}
+             <Button 
+                onClick={() => router.push('/dashboard/transcript')} 
+                variant="outline" 
+                size="sm"
+                className="hidden sm:flex items-center gap-2 bg-slate-50 hover:bg-slate-100"
+             >
+                <GraduationCap className="w-4 h-4 text-indigo-600" /> Transcript
+             </Button>
+             
+             <Button variant="ghost" size="sm" onClick={() => setShowLogoutModal(true)} className="text-red-500 hover:bg-red-50">
+                <LogOut className="w-4 h-4 mr-2" /> Logout
+             </Button>
           </div>
-          <Button
-            variant="danger"
-            size="md"
-            onClick={() => setShowLogoutModal(true)}
-            className="flex items-center gap-2"
-          >
-            <LogOut className="w-4 h-4" />
-            <span className="hidden sm:inline">Logout</span>
-          </Button>
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 py-8">
+      <div className="max-w-5xl mx-auto px-4 py-8 space-y-8">
         
-        {/* Profile Card */}
-        <div className="bg-white rounded-2xl shadow-lg overflow-visible mb-6 relative border border-slate-100">
-          <div className="h-32 bg-linear-to-r from-indigo-600 via-purple-600 to-pink-600 rounded-t-2xl"></div>
-          <div className="px-6 pb-6">
-            <div className="flex flex-col sm:flex-row items-start sm:items-end gap-6 -mt-12">
-              
-              {/* Avatar */}
-              <div className="relative group">
-                <div className={`w-32 h-32 rounded-full border-4 border-white bg-slate-200 shadow-2xl relative z-10 overflow-hidden ${frameClass}`}>
-                   <Image 
-                     src={profile.avatar_url || `https://api.dicebear.com/7.x/notionists/svg?seed=${profile.email}`} 
-                     alt="Profile" 
-                     fill 
-                     className="object-cover"
-                   />
-                </div>
-                <button 
-                  onClick={() => fileInputRef.current?.click()}
-                  className="absolute bottom-0 right-0 z-20 w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center shadow-lg hover:bg-indigo-700 transition"
-                  aria-label="Change Avatar"
-                >
-                  {uploading ? <Loader2 className="w-5 h-5 text-white animate-spin" /> : <Camera className="w-5 h-5 text-white" />}
-                </button>
-                <input ref={fileInputRef} type="file" hidden accept="image/*" onChange={handleAvatarUpload} />
-              </div>
+        {/* Profile Header */}
+        <ProfileHeader 
+          profile={profile} 
+          fullName={formData.full_name}
+          level={level}
+          currentLevelXp={currentLevelXp}
+          xpForNextLevel={1000}
+          xpProgress={xpProgress}
+          uploading={uploading}
+          onAvatarClick={() => fileInputRef.current?.click()}
+        />
+        <input ref={fileInputRef} type="file" hidden accept="image/*" onChange={handleAvatarUpload} />
 
-              {/* Info */}
-              <div className="flex-1 mt-4 sm:mt-0">
-                <h2 className="text-3xl font-bold text-gray-900">{formData.full_name}</h2>
-                <p className="text-gray-500 font-medium">@{profile.email.split('@')[0]} • Level {level}</p>
-                
-                <div className="flex flex-wrap gap-3 mt-4">
-                  <div className="flex items-center gap-2 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100">
-                    <Trophy className="w-4 h-4 text-indigo-600" />
-                    <span className="font-bold text-indigo-900 text-sm">Lvl {level}</span>
-                  </div>
-                  <div className="flex items-center gap-2 bg-orange-50 px-3 py-1.5 rounded-lg border border-orange-100">
-                    <Flame className="w-4 h-4 text-orange-600" />
-                    <span className="font-bold text-orange-900 text-sm">{profile.current_streak || 0} Day Streak</span>
-                  </div>
-                  <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-100">
-                    <span className="text-sm">💎</span>
-                    <span className="font-bold text-blue-900 text-sm">{profile.gems || 0} Gems</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            {/* Progress Bar */}
-            <div className="mt-6">
-              <div className="flex justify-between text-xs font-bold text-gray-500 mb-1">
-                <span>XP: {currentLevelXp}</span>
-                <span>Goal: {xpForNextLevel}</span>
-              </div>
-              <div className="bg-gray-100 rounded-full h-3 overflow-hidden">
-                <div 
-                  className="h-full bg-linear-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-500"
-                  style={{ width: `${(currentLevelXp / xpForNextLevel) * 100}%` }}
-                ></div>
-              </div>
-            </div>
-          </div>
+        {/* Tabs */}
+        <div className="flex p-1 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-x-auto">
+           {['overview', 'achievements', 'profile', 'interests'].map((tab) => (
+             <button
+               key={tab}
+               onClick={() => setActiveTab(tab as any)}
+               className={`flex-1 min-w-[100px] py-3 text-sm font-bold rounded-xl transition-all capitalize flex items-center justify-center gap-2 ${
+                 activeTab === tab ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'
+               }`}
+             >
+               {tab === 'overview' && <TrendingUp className="w-4 h-4" />}
+               {tab === 'achievements' && <Trophy className="w-4 h-4" />}
+               {tab === 'profile' && <User className="w-4 h-4" />}
+               {tab === 'interests' && <Target className="w-4 h-4" />}
+               {tab}
+             </button>
+           ))}
         </div>
 
-        {/* Navigation Tabs */}
-        <div className="bg-white rounded-xl shadow-sm mb-6 overflow-hidden border border-slate-100">
-          <div className="flex overflow-x-auto">
-            {[
-              { id: 'profile', icon: User, label: 'Profile' },
-              { id: 'stats', icon: TrendingUp, label: 'Activity' },
-              { id: 'shop', icon: ShoppingBag, label: 'Frame Shop' },
-              { id: 'interests', icon: Target, label: 'Interests' }
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 flex-1 min-w-[120px] px-6 py-4 font-bold text-sm transition ${
-                  activeTab === tab.id
-                    ? 'bg-slate-50 text-indigo-600 border-b-2 border-indigo-600'
-                    : 'text-gray-500 hover:text-gray-800'
-                }`}
-              >
-                <tab.icon className="w-4 h-4" />
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* Content */}
+        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+          {activeTab === 'overview' && (
+            <OverviewTab 
+              currentXp={profile.xp || 0} 
+              totalHours={stats.totalHours} 
+              totalDays={stats.totalDays}
+              assignmentsCompleted={stats.assignmentsCompleted}
+              assignmentsTotal={stats.assignmentsTotal}
+              quizzesCompleted={stats.quizzesCompleted}
+              quizzesTotal={stats.quizzesTotal}
+              weeklyActivity={stats.weeklyActivity} 
+              achievements={achievements} // Pass Real Badges
+            />
+          )}
 
-        {/* --- TAB CONTENT --- */}
-        <div className="space-y-6">
-          
-          {/* PROFILE */}
+          {activeTab === 'achievements' && (
+             <AchievementsTab 
+               achievements={achievements} 
+               onRefresh={() => setRefreshKey(prev => prev + 1)} // Sync Trigger
+             />
+          )}
+
           {activeTab === 'profile' && (
-            <div className="bg-white rounded-2xl shadow-lg p-6 border border-slate-100">
-                <h3 className="text-lg font-bold text-gray-900 mb-6 flex items-center gap-2">
-                  <User className="w-5 h-5 text-indigo-600" /> Personal Information
-                </h3>
-                
-                <div className="space-y-4 max-w-3xl">
-                  {/* Full Name Field */}
-                  <div className="group flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-100 hover:border-indigo-200 transition">
-                    <div className="flex-1">
-                      <p className="text-xs font-bold text-gray-500 uppercase mb-1">Full Name</p>
-                      {editMode.full_name ? (
-                        <input 
-                          value={formData.full_name} 
-                          onChange={e => setFormData({...formData, full_name: e.target.value})} 
-                          className="w-full bg-white p-2 rounded border border-indigo-300 focus:ring-2 focus:ring-indigo-200 outline-none" 
-                        />
-                      ) : <p className="font-bold text-gray-900">{formData.full_name}</p>}
-                    </div>
-                    <div className="flex gap-2">
-                      {editMode.full_name ? (
-                        <>
-                          <button onClick={() => handleCancel('full_name')} className="text-red-500 p-2 hover:bg-red-50 rounded-lg"><X className="w-4 h-4" /></button>
-                          <button onClick={() => handleSave('full_name')} className="text-green-600 p-2 hover:bg-green-50 rounded-lg"><Save className="w-4 h-4" /></button>
-                        </>
-                      ) : (
-                        <button onClick={() => handleEdit('full_name')} className="text-indigo-600 p-2 hover:bg-indigo-50 rounded-lg"><Edit2 className="w-4 h-4" /></button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Phone Field */}
-                  <div className="group flex items-center justify-between p-4 bg-slate-50 rounded-xl border border-slate-100 hover:border-indigo-200 transition">
-                    <div className="flex-1">
-                      <p className="text-xs font-bold text-gray-500 uppercase mb-1">Phone</p>
-                      {editMode.phone_number ? (
-                        <input value={formData.phone_number} onChange={e => setFormData({...formData, phone_number: e.target.value})} className="w-full bg-white p-2 rounded border border-indigo-300 focus:ring-2 focus:ring-indigo-200 outline-none" />
-                      ) : <p className="font-bold text-gray-900">{formData.phone_number || 'Not Set'}</p>}
-                    </div>
-                    <div className="flex gap-2">
-                      {editMode.phone_number ? (
-                        <>
-                          <button onClick={() => handleCancel('phone_number')} className="text-red-500 p-2 hover:bg-red-50 rounded-lg"><X className="w-4 h-4" /></button>
-                          <button onClick={() => handleSave('phone_number')} className="text-green-600 p-2 hover:bg-green-50 rounded-lg"><Save className="w-4 h-4" /></button>
-                        </>
-                      ) : (
-                        <button onClick={() => handleEdit('phone_number')} className="text-indigo-600 p-2 hover:bg-indigo-50 rounded-lg"><Edit2 className="w-4 h-4" /></button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Bio Field */}
-                  <div className="group flex items-start justify-between p-4 bg-slate-50 rounded-xl border border-slate-100 hover:border-indigo-200 transition">
-                    <div className="flex-1">
-                      <p className="text-xs font-bold text-gray-500 uppercase mb-1">Bio</p>
-                      {editMode.bio ? (
-                        <textarea value={formData.bio} onChange={e => setFormData({...formData, bio: e.target.value})} className="w-full bg-white p-2 rounded border border-indigo-300 focus:ring-2 focus:ring-indigo-200 outline-none h-24 resize-none" />
-                      ) : <p className="text-gray-700 leading-relaxed">{formData.bio || 'No bio yet.'}</p>}
-                    </div>
-                    <div className="flex gap-2">
-                      {editMode.bio ? (
-                        <>
-                          <button onClick={() => handleCancel('bio')} className="text-red-500 p-2 hover:bg-red-50 rounded-lg"><X className="w-4 h-4" /></button>
-                          <button onClick={() => handleSave('bio')} className="text-green-600 p-2 hover:bg-green-50 rounded-lg"><Save className="w-4 h-4" /></button>
-                        </>
-                      ) : (
-                        <button onClick={() => handleEdit('bio')} className="text-indigo-600 p-2 hover:bg-indigo-50 rounded-lg"><Edit2 className="w-4 h-4" /></button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-            </div>
+            <EditProfileTab 
+              formData={formData} 
+              editMode={editMode}
+              onChange={(f, v) => setFormData(prev => ({ ...prev, [f]: v }))}
+              onEdit={(f) => setEditMode({ ...editMode, [f]: true })}
+              onCancel={(f) => setEditMode({ ...editMode, [f]: false })}
+              onSave={handleSave}
+            />
           )}
 
-          {/* SHOP */}
-          {activeTab === 'shop' && (
-            <div className="bg-white rounded-2xl shadow-lg p-6 border border-slate-100">
-               <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-lg font-bold text-gray-900">Frame Shop</h3>
-                  <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-bold">Balance: 💎 {profile.gems || 0}</span>
-               </div>
-               {shopItems.length === 0 ? (
-                 <p className="text-center text-gray-500 italic py-10">The shop is currently closed (Database connection error).</p>
-               ) : (
-                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {shopItems.map(item => {
-                      const isOwned = profile.owned_frames?.includes(item.id);
-                      const isEquipped = profile.profile_frame === item.id;
-                      return (
-                        <div key={item.id} className={`p-4 rounded-xl border-2 text-center transition ${isEquipped ? 'border-indigo-500 bg-indigo-50' : 'border-slate-100 hover:border-indigo-200'}`}>
-                           <div className={`w-16 h-16 rounded-full mx-auto mb-3 bg-slate-200 ${item.asset_value}`}></div>
-                           <h4 className="font-bold text-gray-900 text-sm">{item.name}</h4>
-                           <p className="text-xs text-gray-500 mb-3">{item.cost === 0 ? 'Free' : `💎 ${item.cost}`}</p>
-                           
-                           {isEquipped ? (
-                             <span className="text-xs font-bold text-indigo-600 block py-1.5">Equipped</span>
-                           ) : isOwned ? (
-                             <Button onClick={() => handleEquipFrame(item)} variant="outline" size="sm" className="w-full">Equip</Button>
-                           ) : (
-                             <Button onClick={() => handleBuyItem(item)} disabled={(profile.gems || 0) < item.cost} variant="primary" size="sm" className="w-full">Buy</Button>
-                           )}
-                        </div>
-                      );
-                    })}
-                 </div>
-               )}
-            </div>
-          )}
-
-          {/* INTERESTS */}
           {activeTab === 'interests' && (
-            <div className="bg-white rounded-2xl shadow-lg p-6 border border-slate-100">
-               <h3 className="text-lg font-bold text-gray-900 mb-2">Learning Interests</h3>
-               <p className="text-gray-500 text-sm mb-6">Select topics to personalize your AI content.</p>
-               {availableInterests.length === 0 ? (
-                 <p className="text-center text-gray-500 italic py-10">No interests found (Database connection error).</p>
-               ) : (
-                 <div className="flex flex-wrap gap-3">
-                    {availableInterests.map(interest => (
-                      <button
-                        key={interest.name}
-                        onClick={() => toggleInterest(interest.name)}
-                        className={`px-5 py-2.5 rounded-xl font-bold text-sm transition-all border-2 flex items-center gap-2 ${
-                          profile.interests?.includes(interest.name)
-                            ? 'border-indigo-500 bg-indigo-50 text-indigo-700 shadow-sm'
-                            : 'border-slate-100 bg-white text-slate-500 hover:border-slate-300'
-                        }`}
-                      >
-                        <span>{interest.emoji}</span>
-                        {interest.name}
-                      </button>
-                    ))}
-                 </div>
-               )}
-            </div>
+            <InterestsTab 
+              availableInterests={availableInterests}
+              selectedInterests={profile.interests ?? []} 
+              onToggle={handleToggleInterest}
+            />
           )}
-
-          {/* STATS (Real Data) */}
-          {activeTab === 'stats' && (
-             <div className="grid gap-6">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                   <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
-                      <div className="flex items-center gap-2 mb-1 text-slate-400">
-                         <BookOpen className="w-4 h-4" /> <span className="text-xs font-bold uppercase">Total XP</span>
-                      </div>
-                      <p className="text-2xl font-black text-indigo-600">{(profile.xp || 0).toLocaleString()}</p>
-                   </div>
-                   <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
-                      <div className="flex items-center gap-2 mb-1 text-slate-400">
-                         <Flame className="w-4 h-4" /> <span className="text-xs font-bold uppercase">Streak</span>
-                      </div>
-                      <p className="text-2xl font-black text-orange-600">{profile.current_streak || 0} Days</p>
-                   </div>
-                   <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100">
-                      <div className="flex items-center gap-2 mb-1 text-slate-400">
-                         <Target className="w-4 h-4" /> <span className="text-xs font-bold uppercase">This Week</span>
-                      </div>
-                      <p className="text-2xl font-black text-green-600">
-                        {weeklyActivity.reduce((acc, curr) => acc + curr.hours, 0).toFixed(1)} Hrs
-                      </p>
-                   </div>
-                </div>
-
-                {/* Weekly Chart */}
-                <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
-                   <h3 className="text-lg font-bold text-gray-900 mb-6">Activity (Last 7 Days)</h3>
-                   {weeklyActivity.length === 0 ? (
-                     <div className="flex h-48 items-center justify-center text-gray-400 text-sm">
-                       No activity data available yet.
-                     </div>
-                   ) : (
-                     <div className="flex items-end justify-between gap-2 h-48">
-                        {weeklyActivity.map((day, idx) => (
-                          <div key={idx} className="flex-1 flex flex-col items-center gap-2 group">
-                            <div className="relative flex-1 w-full flex items-end">
-                              <div 
-                                className="w-full bg-indigo-100 rounded-t-lg transition-all duration-500 group-hover:bg-indigo-600"
-                                style={{ height: `${(day.xp / maxXp) * 100}%` }}
-                              >
-                                 {/* Tooltip */}
-                                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block bg-gray-900 text-white text-xs py-1 px-2 rounded whitespace-nowrap z-10 shadow-lg">
-                                     <p className="font-bold">{day.xp} XP</p>
-                                     <p className="opacity-80">{day.hours} hrs</p>
-                                 </div>
-                              </div>
-                            </div>
-                            <p className="text-xs font-bold text-gray-400">{day.day}</p>
-                          </div>
-                        ))}
-                     </div>
-                   )}
-                </div>
-             </div>
-          )}
-
         </div>
       </div>
 
-      {/* Logout Modal */}
       {showLogoutModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full animate-in zoom-in-95">
-            <h3 className="text-lg font-bold text-gray-900 mb-2">Log out?</h3>
-            <p className="text-gray-500 text-sm mb-6">You will be returned to the login screen.</p>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl">
+            <h3 className="text-xl font-black mb-4">Log Out?</h3>
             <div className="flex gap-3">
-              <button onClick={() => setShowLogoutModal(false)} className="flex-1 py-2.5 bg-gray-100 text-gray-700 font-bold rounded-lg hover:bg-gray-200 transition">Cancel</button>
-              <button onClick={handleLogout} className="flex-1 py-2.5 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition">Log Out</button>
+              <Button variant="secondary" onClick={() => setShowLogoutModal(false)} className="flex-1">Cancel</Button>
+              <Button variant="danger" onClick={handleLogout} className="flex-1">Log Out</Button>
             </div>
           </div>
         </div>

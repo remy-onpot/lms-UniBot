@@ -100,6 +100,9 @@ export const CourseService = {
   },
 
   async deleteAssignment(id: string) {
+    // Delegates to AssignmentService for proper cleanup logic if needed, 
+    // or direct delete if imported services cause circular dependency issues.
+    // Assuming simple delete here for course service scope, but prefer using AssignmentService.delete
     const { error } = await supabase.from('assignments').delete().eq('id', id);
     if (error) throw error;
   },
@@ -201,5 +204,55 @@ export const CourseService = {
     const uniqueTopics = Array.from(new Map(topics.map(item => [item.title, item])).values());
     
     return uniqueTopics;
-  }
+  },
+
+  /**
+   * ✅ PROFESSIONAL DELETE: 
+   * 1. Soft-deletes the Topic (preserves grades/history).
+   * 2. Hard-deletes the Database entry for the material.
+   * 3. Hard-deletes the Actual File from Storage (saves money).
+   */
+  async deleteMainHandout(materialId: string) {
+    // 1. Fetch the file URL first
+    const { data: material, error: fetchError } = await supabase
+      .from('materials')
+      .select('file_url')
+      .eq('id', materialId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    // 2. Archive associated topics
+    const { error: topicError } = await supabase
+      .from('course_topics')
+      .update({ status: 'archived' })
+      .eq('material_id', materialId);
+
+    if (topicError) throw topicError;
+
+    // 3. Delete the Material Record
+    const { error: matError } = await supabase
+      .from('materials')
+      .delete()
+      .eq('id', materialId);
+
+    if (matError) throw matError;
+
+    // 4. CLEANUP STORAGE
+    if (material?.file_url) {
+      // URL format: .../storage/v1/object/public/course-content/folder/filename.pdf
+      // Adjust split key based on your bucket path if needed. Assuming 'course-content' is the bucket.
+      const path = material.file_url.split('/course-content/').pop();
+      
+      if (path) {
+        const { error: storageError } = await supabase.storage
+          .from('course-content')
+          .remove([path]);
+          
+        if (storageError) {
+          console.error("Failed to cleanup file from storage:", storageError);
+        }
+      }
+    }
+  },
 };
