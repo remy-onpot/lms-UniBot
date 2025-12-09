@@ -25,7 +25,7 @@ interface ClassGroup {
   courses: CourseItem[];
   bundlePrice: number;
   totalSinglePrice: number;
-  isFullyUnlocked: boolean; // True if bundle bought OR all courses bought
+  isFullyUnlocked: boolean; 
   expiresAt?: string;
 }
 
@@ -45,7 +45,6 @@ export default function StudentBillingPage() {
       if (!user) return router.push('/login');
 
       // 1. Get Enrolled Classes
-      // Supabase often returns joined relations as arrays: class: [{ id, name... }]
       const { data: enrollments } = await supabase
         .from('class_enrollments')
         .select('class:classes(id, name, access_code)')
@@ -56,7 +55,7 @@ export default function StudentBillingPage() {
           return;
       }
 
-      // 2. Get Active Access Records (Future Expiry Only)
+      // 2. Get Access Records
       const now = new Date().toISOString();
       const { data: access } = await supabase
         .from('student_course_access')
@@ -64,7 +63,6 @@ export default function StudentBillingPage() {
         .eq('student_id', user.id)
         .gt('expires_at', now); 
 
-      // Create lookup sets
       const unlockedCourseIds = new Set(access?.map(a => a.course_id).filter(Boolean));
       const unlockedClassIds = new Set(access?.map(a => a.class_id).filter(Boolean));
       
@@ -76,19 +74,17 @@ export default function StudentBillingPage() {
       const groups: ClassGroup[] = [];
 
       for (const enr of enrollments) {
-        // ✅ FIX: Safely extract the class object. 
-        // Supabase typing sometimes implies array even for single relations.
+        // ✅ FIX: Safely handle array vs object response from Supabase
         const classData = Array.isArray(enr.class) ? enr.class[0] : enr.class;
         
-        // Safety check if class data is missing
         if (!classData) continue;
 
-        // Use 'any' casting here to avoid strict TS issues with Supabase generated types if they mismatch
+        // Extract fields safely
         const clsId = (classData as any).id;
         const clsName = (classData as any).name;
         const clsCode = (classData as any).access_code;
 
-        // Fetch active courses in this class
+        // Fetch active courses
         const { data: courses } = await supabase
             .from('courses')
             .select('id, title')
@@ -99,7 +95,6 @@ export default function StudentBillingPage() {
 
         const isBundleActive = unlockedClassIds.has(clsId);
         
-        // Map courses and check individual status
         const courseItems: CourseItem[] = courses.map(c => {
             const isSingleActive = unlockedCourseIds.has(c.id);
             const isUnlocked = isBundleActive || isSingleActive;
@@ -114,10 +109,11 @@ export default function StudentBillingPage() {
         });
 
         const allCoursesUnlocked = courseItems.every(c => c.isUnlocked);
-
-        // Pricing Math
         const singleTotal = courseItems.length * BUSINESS_LOGIC.COHORT.pricing.single_course;
-        const bundlePrice = singleTotal * 0.75; // 25% Discount
+        
+        // Dynamic Bundle Calculation
+        // TODO: Ideally fetch this count via SQL aggregation for 100% accuracy, but this works for now
+        const bundlePrice = singleTotal * 0.75; 
 
         groups.push({
           id: clsId,
@@ -157,11 +153,11 @@ export default function StudentBillingPage() {
       
       if (data.bypass) {
         toast.success("Access Verified! Updating...");
-        await fetchData(); // Refresh local state
+        await fetchData(); 
       } else if (data.authorization_url) {
         window.location.href = data.authorization_url;
       } else {
-        toast.error(data.error || "Payment failed to initialize");
+        toast.error(data.error || "Payment failed");
       }
     } catch (e) { 
         toast.error("Connection error"); 
@@ -182,7 +178,6 @@ export default function StudentBillingPage() {
   return (
     <div className="min-h-screen bg-slate-50 font-sans pb-24">
       
-      {/* --- HEADER --- */}
       <div className="bg-white border-b border-slate-200 sticky top-0 z-20">
         <div className="max-w-5xl mx-auto px-4 py-4 flex items-center gap-3">
           <button onClick={() => router.back()} className="p-2 hover:bg-slate-100 rounded-full transition">
@@ -193,12 +188,10 @@ export default function StudentBillingPage() {
       </div>
 
       <div className="max-w-5xl mx-auto px-4 py-8 space-y-8">
-        
-        {/* Intro */}
         <div className="text-center mb-10">
           <h2 className="text-3xl font-black text-slate-900">Unlock Your Potential</h2>
           <p className="text-slate-500 mt-2 max-w-xl mx-auto">
-            Your first 2 weeks are free. Secure your semester by unlocking full access to AI tutors, quizzes, and resources.
+             Your first {BUSINESS_LOGIC.COHORT.free_weeks} weeks are free. Secure your semester by unlocking full access.
           </p>
         </div>
 
@@ -211,11 +204,9 @@ export default function StudentBillingPage() {
           </div>
         )}
 
-        {/* --- CLASS GROUPS --- */}
         {classes.map((cls) => (
           <div key={cls.id} className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
              
-             {/* Class Header Banner */}
              <div className="bg-slate-900 p-6 md:p-8 text-white flex flex-col md:flex-row justify-between items-start md:items-center gap-6 relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500 rounded-full blur-3xl -mr-20 -mt-20 opacity-20"></div>
                 
@@ -236,7 +227,6 @@ export default function StudentBillingPage() {
                    )}
                 </div>
                 
-                {/* BUNDLE BUY BUTTON (Hidden if already fully unlocked) */}
                 {!cls.isFullyUnlocked && (
                   <div className="relative z-10 flex flex-col items-end w-full md:w-auto bg-white/5 p-4 rounded-2xl backdrop-blur-sm border border-white/10">
                      <div className="flex items-center gap-2 mb-3">
@@ -256,7 +246,6 @@ export default function StudentBillingPage() {
                 )}
              </div>
 
-             {/* Course List Grid */}
              <div className="p-6 md:p-8 grid md:grid-cols-2 gap-4 bg-slate-50/50">
                 {cls.courses.map(course => (
                   <div 
@@ -276,7 +265,7 @@ export default function StudentBillingPage() {
                            <p className="text-[10px] font-medium text-slate-500">
                              {course.isUnlocked 
                                ? (course.unlockReason === 'bundle' ? 'Included in Bundle' : 'Purchased') 
-                               : 'Trial Active (Weeks 1-2 Free)'}
+                               : `Trial Active (Weeks 1-${BUSINESS_LOGIC.COHORT.free_weeks} Free)`}
                            </p>
                         </div>
                      </div>

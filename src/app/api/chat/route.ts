@@ -5,7 +5,7 @@ import { z } from "zod";
 import { AppError, handleAPIError } from "@/lib/error-handler";
 import { createClient } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rate-limit";
-import { canAccessCourse } from "@/lib/auth-utils";
+import { BUSINESS_LOGIC } from "@/lib/constants";
 
 const genAI = new GoogleGenerativeAI(env.GOOGLE_GENERATIVE_AI_API_KEY || "");
 export const runtime = "edge";
@@ -14,57 +14,128 @@ const chatRequestSchema = z.object({
   messages: z.array(z.object({
     role: z.enum(['user', 'assistant', 'system']),
     content: z.string().trim().min(1).max(10000),
-    id: z.string().optional(),
   })).min(1),
-  documentContext: z.string().max(50000).optional(),
-  materialId: z.string().uuid().optional(),
+  materialId: z.string().uuid(),
+  pageRange: z.string().optional(),
+  // ✅ REQUIRE topicId for security context (if accessing specific week)
+  topicId: z.string().uuid().optional(), 
+  topicContext: z.object({
+    title: z.string(),
+    description: z.string().optional().nullable()
+  }).optional().nullable()
 });
 
 export async function POST(req: Request) {
   try {
     const supabase = await createClient();
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    // 1. Auth Check
+    if (!user) throw new AppError("Unauthorized", 401);
 
-    if (!session) throw new AppError("Unauthorized", 401);
-
-    const isAllowed = await checkRateLimit(session.user.id, 'chat');
+    // 2. Rate Limit
+    const isAllowed = await checkRateLimit(user.id, 'chat');
     if (!isAllowed) throw new AppError("Rate limit exceeded.", 429);
 
     const body = await req.json();
-    const { messages, documentContext, materialId } = chatRequestSchema.parse(body);
+    const { messages, materialId, pageRange, topicId, topicContext } = chatRequestSchema.parse(body);
 
-    if (materialId) {
-      const { data: material } = await supabase
-        .from('materials')
-        .select('course_id')
-        .eq('id', materialId)
-        .single();
+    // 3. Fetch Material & Course Context
+    const { data: material } = await supabase
+      .from('materials')
+      .select('id, content_text, course:courses(id, class_id)')
+      .eq('id', materialId)
+      .single();
 
-      if (material) {
-        const hasAccess = await canAccessCourse(supabase, session.user.id, material.course_id);
-        if (!hasAccess) throw new AppError("Forbidden", 403);
-      }
+    if (!material?.content_text) throw new AppError("Material content missing", 404);
+
+    // 4. 🛡️ SECURITY CORE: Determine Access Rights
+    let hasAccess = false;
+    const now = new Date().toISOString();
+
+    // A. Check if Lecturer (Owner)
+    const { data: isLecturer } = await supabase
+        .from('classes')
+        .select('id')
+        // @ts-ignore
+        .eq('id', material.course.class_id)
+        .eq('lecturer_id', user.id)
+        .maybeSingle();
+
+    if (isLecturer) hasAccess = true;
+
+    // B. Check Student Payment (Single or Bundle)
+    if (!hasAccess) {
+        const { data: access } = await supabase
+          .from('student_course_access')
+          .select('id')
+          .eq('student_id', user.id)
+          // @ts-ignore
+          .or(`course_id.eq.${material.course.id},class_id.eq.${material.course.class_id}`)
+          .gt('expires_at', now)
+          .maybeSingle();
+        
+        if (access) hasAccess = true;
     }
 
-    const conversationContents = messages
-      .filter((m) => m.role !== "system")
-      .map((m) => ({
+    // C. Check "Free Week" Logic (The Loophole Closer)
+    // If they haven't paid, we ONLY allow access if the Topic is Week 1 or 2.
+    if (!hasAccess && topicId) {
+        const { data: topic } = await supabase
+            .from('course_topics')
+            .select('week_number')
+            .eq('id', topicId)
+            .single();
+
+        // Strict Check: Is this actually a free week?
+        if (topic && topic.week_number <= BUSINESS_LOGIC.COHORT.free_weeks) {
+            hasAccess = true; // ✅ Allow Trial Access
+        }
+    }
+
+    // 🚨 FINAL VERDICT
+    if (!hasAccess) {
+        throw new AppError("🔒 Content Locked. Upgrade to access Week 3+.", 403);
+    }
+
+    // 5. RAG Logic: Context Slicing
+    let contextText = material.content_text;
+
+    if (pageRange) {
+       const [start, end] = pageRange.split('-').map(Number);
+       if (!isNaN(start) && !isNaN(end)) {
+          const pages = material.content_text.split(/--- Page \d+ ---/);
+          const selectedPages = pages.slice(start, end + 1);
+          if (selectedPages.length > 0) {
+              contextText = selectedPages.join("\n");
+          }
+       }
+    }
+
+    // 6. AI Persona & Generation
+    let systemInstruction = `You are UniBot, an expert AI Teaching Assistant.`;
+    
+    if (topicContext?.title) {
+      systemInstruction += `
+      \nCURRENT LESSON: "${topicContext.title}"
+      ${topicContext.description ? `Overview: "${topicContext.description}"` : ''}
+      
+      YOUR GOAL: Help the student understand THIS specific weekly topic using the provided text.
+      `;
+    }
+
+    systemInstruction += `\n\nREFERENCE TEXT (${pageRange ? `Pages ${pageRange}` : 'Full Document'}):\n${contextText.slice(0, 80000)}`;
+
+    const conversationContents = messages.map(m => ({
         role: m.role === "assistant" ? "model" : "user",
         parts: [{ text: m.content }],
-      }));
+    }));
 
-    let systemInstruction = `You are UniBot, an AI Teaching Assistant.`;
-    if (documentContext) {
-        systemInstruction += ` Use this context: ${documentContext}`;
-    }
+    const model = genAI.getGenerativeModel({ 
+        model: "gemini-2.5-flash", 
+        systemInstruction: systemInstruction 
+    });
 
-    const isFirstUserMessage = conversationContents.length === 1 && conversationContents[0].role === "user";
-    if (isFirstUserMessage) {
-      conversationContents[0].parts[0].text = `${systemInstruction}\n\nUser: ${conversationContents[0].parts[0].text}`;
-    }
-
-    // ✅ FIX: Use Gemini 2.5 Flash
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     const result = await model.generateContentStream({ contents: conversationContents });
 
     const stream = new ReadableStream({

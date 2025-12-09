@@ -1,15 +1,50 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js"; // Direct usage for admin
+import { createClient } from "@supabase/supabase-js";
 import { BUSINESS_LOGIC } from "@/lib/constants";
+
+// Initialize Admin Client (Bypass RLS)
+// We do this OUTSIDE the handler if possible, but inside is safer for serverless cold starts to pick up env vars
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  }
+);
 
 export async function POST(req: Request) {
   try {
+    // 1. Env Check
+    if (!process.env.PAYSTACK_SECRET_KEY) {
+      console.error("❌ CRITICAL: Missing PAYSTACK_SECRET_KEY");
+      return NextResponse.json({ error: "Server Configuration Error" }, { status: 500 });
+    }
+
     const { reference } = await req.json();
 
-    if (!reference) return NextResponse.json({ error: "No reference provided" }, { status: 400 });
+    if (!reference) {
+      return NextResponse.json({ error: "No transaction reference provided" }, { status: 400 });
+    }
 
-    // 1. Verify with Paystack
+    // 2. Idempotency Check (Don't process twice)
+    // We check our DB first to save a Paystack API call
+    const { data: existingTx } = await supabaseAdmin
+      .from('transactions')
+      .select('id')
+      .eq('reference', reference)
+      .maybeSingle();
+
+    if (existingTx) {
+      console.log(`ℹ️ Transaction ${reference} already processed.`);
+      return NextResponse.json({ status: true, message: "Transaction already recorded" });
+    }
+
+    // 3. Verify with Paystack (The Source of Truth)
     const paystackRes = await fetch(`https://api.paystack.co/transaction/verify/${reference}`, {
+      method: 'GET',
       headers: {
         Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
       },
@@ -18,80 +53,83 @@ export async function POST(req: Request) {
     const data = await paystackRes.json();
 
     if (!data.status || data.data.status !== 'success') {
-      return NextResponse.json({ error: "Payment verification failed" }, { status: 400 });
+      console.warn(`⚠️ Payment verification failed for ref: ${reference}`);
+      return NextResponse.json({ error: "Payment verification failed or pending" }, { status: 400 });
     }
 
     const { metadata, amount, customer } = data.data;
     const userId = metadata.user_id;
 
-    // 2. Initialize Admin Client (Bypass RLS)
-    const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-
-    // 3. Idempotency Check (Don't process twice)
-    const { data: existingTx } = await supabaseAdmin
-      .from('transactions')
-      .select('id')
-      .eq('reference', reference)
-      .single();
-
-    if (existingTx) {
-      return NextResponse.json({ status: true, message: "Already processed" });
+    if (!userId) {
+        return NextResponse.json({ error: "Transaction metadata missing user_id" }, { status: 400 });
     }
 
-    // 4. Log Transaction
+    // 4. Log Transaction (Audit Trail)
+    // We log it FIRST so we have a record even if the permission update fails logic-wise
     const { error: txError } = await supabaseAdmin.from('transactions').insert({
       user_id: userId,
       reference: reference,
       amount: amount / 100, // Convert Kobo to GHS
       status: 'success',
-      purpose: metadata.type,
-      metadata: metadata
+      purpose: metadata.type || 'unknown',
+      metadata: metadata,
+      currency: data.data.currency
     });
 
     if (txError) {
-        console.error("TX Error:", txError);
-        throw new Error("Failed to log transaction");
+        console.error("🔴 DB Write Error (Transaction):", txError);
+        throw new Error("Failed to record transaction in database");
     }
 
-    // 5. Grant Access
+    // 5. Grant Access / Upgrade Plan
     const expiryDate = new Date();
-    expiryDate.setMonth(expiryDate.getMonth() + 6); // 6 Months Access
+    expiryDate.setMonth(expiryDate.getMonth() + 6); // Standard Semester Access
 
     if (metadata.type === 'subscription') {
         // Upgrade Lecturer
-        await supabaseAdmin.from('users').update({ 
+        const { error: updateError } = await supabaseAdmin.from('users').update({ 
             plan_tier: metadata.plan_tier, 
-            subscription_status: 'active' 
+            subscription_status: 'active',
+            subscription_end_date: expiryDate.toISOString() // Set expiry for SaaS too
         }).eq('id', userId);
-    } 
-    else if (metadata.type === 'class_unlock') {
+
+        if (updateError) throw updateError;
+        
+    } else if (metadata.type === 'class_unlock') {
         // Unlock Student Content
+        const accessData = {
+            student_id: userId,
+            amount_paid: amount / 100,
+            expires_at: expiryDate.toISOString(),
+            access_type: metadata.access_type
+        };
+
         if (metadata.access_type === 'bundle') {
-            await supabaseAdmin.from('student_course_access').insert({
-                student_id: userId,
-                class_id: metadata.class_id,
-                access_type: 'semester_bundle',
-                amount_paid: amount / 100,
-                expires_at: expiryDate.toISOString()
-            });
+             // Unlock by Class ID
+             const { error: accessError } = await supabaseAdmin.from('student_course_access').insert({
+                ...accessData,
+                class_id: metadata.class_id
+             });
+             if (accessError) throw accessError;
+
         } else {
-            await supabaseAdmin.from('student_course_access').insert({
-                student_id: userId,
-                course_id: metadata.course_id,
-                access_type: 'single_course',
-                amount_paid: amount / 100,
-                expires_at: expiryDate.toISOString()
-            });
+             // Unlock by Course ID
+             const { error: accessError } = await supabaseAdmin.from('student_course_access').insert({
+                ...accessData,
+                course_id: metadata.course_id
+             });
+             if (accessError) throw accessError;
         }
     }
 
+    console.log(`✅ Payment verified & access granted for user ${userId}`);
     return NextResponse.json({ status: true, success: true });
 
   } catch (error: any) {
-    console.error("Verification Error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("🔴 VERIFICATION ROUTE CRITICAL ERROR:", error);
+    return NextResponse.json({ 
+      error: error.message || "Internal Processing Error",
+      details: "Check server logs"
+    }, { status: 500 });
   }
 }
