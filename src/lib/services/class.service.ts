@@ -1,5 +1,28 @@
-import { supabase } from '../supabase';
-import { getPlanLimits } from '../constants';
+import { supabase } from '@/lib/supabase';
+import { getPlanLimits, SAAS_PLANS, PlanTier } from '@/lib/constants';
+
+// --- Interfaces ---
+export interface DashboardClass {
+  id: string;
+  name: string;
+  lecturer_id: string;
+  access_code: string;
+  created_at: string;
+  status: 'active' | 'archived';
+  type: 'saas' | 'cohort';
+  description?: string;
+  course_count?: number;
+  studentCount?: number;
+  isOwner?: boolean;
+}
+
+export interface EnrolledStudent {
+  id: string;
+  full_name: string;
+  email: string;
+  avatar_url?: string;
+  enrolled_at: string;
+}
 
 export const ClassService = {
   
@@ -18,8 +41,7 @@ export const ClassService = {
   },
 
   /**
-   * ✅ NEW: Get Modules (Courses) for a Class
-   * This fixes the "getModules is not a function" error
+   * Get Modules (Courses) for a Class
    */
   async getModules(classId: string) {
     const { data, error } = await supabase
@@ -37,21 +59,48 @@ export const ClassService = {
 
     return data.map((c: any) => ({
       ...c,
-      // @ts-ignore
       assignmentCount: c.assignments?.[0]?.count || 0,
-      // @ts-ignore
       quizCount: c.quizzes?.[0]?.count || 0
     }));
   },
 
   /**
-   * Fetch only ACTIVE classes for the dashboard.
+   * Get Enrolled Students
    */
-  async getDashboardClasses(userId: string, role: string, isRep: boolean) {
-    if (role === 'student' && !isRep) {
-        return [];
+  async getStudents(classId: string): Promise<EnrolledStudent[]> {
+    const { data, error } = await supabase
+      .from('class_enrollments')
+      .select(`
+        created_at,
+        users:student_id (
+          id, full_name, email, avatar_url
+        )
+      `)
+      .eq('class_id', classId);
+
+    if (error) {
+      console.error("Error fetching students:", error);
+      return [];
     }
 
+    return data.map((d: any) => ({
+      id: d.users.id,
+      full_name: d.users.full_name,
+      email: d.users.email,
+      avatar_url: d.users.avatar_url,
+      enrolled_at: d.created_at
+    }));
+  },
+
+  /**
+   * 🛡️ SECURE: Fetch Dashboard Classes
+   * Retrieves all classes relevant to the user, identifying type and ownership.
+   */
+  async getDashboardClasses(userId: string, role: string, isRep: boolean): Promise<DashboardClass[]> {
+    if (role === 'student' && !isRep) return [];
+
+    // Fetch classes where user is the lecturer
+    // Note: In a real app, you might also fetch classes where they are a "TA" via a join table
     const { data, error } = await supabase
       .from('classes')
       .select(`
@@ -60,7 +109,7 @@ export const ClassService = {
         class_enrollments (count)
       `)
       .eq('lecturer_id', userId)
-      .eq('status', 'active')
+      .in('status', ['active', 'archived']) 
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -70,45 +119,41 @@ export const ClassService = {
 
     return data.map((cls: any) => ({
       ...cls,
-      // @ts-ignore
+      // 🧠 LOGIC: Ensure type is set. Fallback to 'cohort' for legacy safety.
+      type: cls.type || 'cohort', 
+      isOwner: cls.lecturer_id === userId,
       course_count: cls.courses?.[0]?.count || 0,
-      // @ts-ignore
       studentCount: cls.class_enrollments?.[0]?.count || 0
     }));
   },
 
   /**
-   * Fetch ARCHIVED classes.
-   */
-  async getArchivedClasses(userId: string) {
-    const { data, error } = await supabase
-      .from('classes')
-      .select('*')
-      .eq('lecturer_id', userId)
-      .eq('status', 'archived')
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return data;
-  },
-
-  /**
-   * Securely create a class with Limit Checks.
+   * 🛡️ SECURE: Create Class
+   * Enforces limits based on 'SaaS' classes only.
+   * Forces 'type' assignment to prevent permission leaks.
    */
   async createClass(userId: string, classData: any, userProfile: any) {
-    const activeClasses = await this.getDashboardClasses(userId, userProfile.role, userProfile.is_course_rep);
+    // 1. Determine Target Class Type
+    const classType = userProfile.role === 'lecturer' ? 'saas' : 'cohort';
+
+    // 2. Fetch Active Classes of this specific type to check limits
+    const allClasses = await this.getDashboardClasses(userId, userProfile.role, userProfile.is_course_rep);
+    const activeOwnedClasses = allClasses.filter(c => c.type === classType && c.status === 'active');
+    
     const limits = getPlanLimits(userProfile.role, userProfile.plan_tier, userProfile.is_course_rep);
 
-    if (activeClasses.length >= limits.max_classes) {
-        throw new Error(`Plan limit reached (${limits.max_classes} classes). Please upgrade or archive.`);
+    if (activeOwnedClasses.length >= limits.max_classes) {
+        throw new Error(`Plan limit reached (${limits.max_classes} active classes). Please archive old classes or upgrade.`);
     }
 
+    // 3. Create the class
     const { data, error } = await supabase
       .from('classes')
       .insert([{
         ...classData,
         lecturer_id: userId,
-        status: 'active'
+        status: 'active',
+        type: classType // ✅ Explicitly enforced
       }])
       .select()
       .single();
@@ -118,61 +163,84 @@ export const ClassService = {
   },
 
   /**
-   * Archive a class (Soft Delete).
+   * 🛡️ SECURE: Archive Class
+   * Prevents archiving of University Cohorts.
    */
-  async archiveClass(classId: string) {
+  async archiveClass(classId: string, userId: string) {
+    // Verify ownership and type first
+    const { data: cls } = await supabase
+      .from('classes')
+      .select('type, lecturer_id')
+      .eq('id', classId)
+      .single();
+    
+    if (!cls) throw new Error("Class not found");
+    
+    // ⛔ SECURITY BLOCK
+    if (cls.type === 'cohort') {
+        throw new Error("🚫 Action Denied: Cohorts cannot be archived by individual lecturers. Contact Admin.");
+    }
+    
+    if (cls.lecturer_id !== userId) {
+        throw new Error("🚫 Unauthorized: You do not own this class.");
+    }
+
     const { error } = await supabase
       .from('classes')
       .update({ status: 'archived' })
       .eq('id', classId);
+      
     if (error) throw error;
   },
 
   /**
-   * Restore a class (with Limit Check).
+   * 🛡️ SECURE: Restore Class
+   * Checks limits before restoring.
    */
   async restoreClass(classId: string, userId: string, userProfile: any) {
-    const activeClasses = await this.getDashboardClasses(userId, userProfile.role, userProfile.is_course_rep);
+    // 1. Verify Class Properties
+    const { data: cls } = await supabase.from('classes').select('type').eq('id', classId).single();
+    if (!cls) throw new Error("Class not found");
+
+    // 2. Check Limits for that specific type
+    const allClasses = await this.getDashboardClasses(userId, userProfile.role, userProfile.is_course_rep);
+    const activeClasses = allClasses.filter(c => c.type === cls.type && c.status === 'active');
     const limits = getPlanLimits(userProfile.role, userProfile.plan_tier, userProfile.is_course_rep);
 
     if (activeClasses.length >= limits.max_classes) {
-        throw new Error("Cannot restore: Active class limit reached.");
+        throw new Error("Cannot restore: Active class limit reached. Archive another class first.");
     }
 
     const { error } = await supabase
       .from('classes')
       .update({ status: 'active' })
       .eq('id', classId);
+      
     if (error) throw error;
   },
 
   /**
-   * Permanent Delete (Hard Delete).
+   * 🛡️ SECURE: Delete Class
+   * Hard delete, strictly for SaaS classes only.
    */
-  async deleteClass(classId: string) {
+  async deleteClass(classId: string, userId: string) {
+    const { data: cls } = await supabase.from('classes').select('type, lecturer_id').eq('id', classId).single();
+    
+    if (!cls) throw new Error("Class not found");
+    
+    if (cls.type === 'cohort') {
+        throw new Error("🚫 Action Denied: Cohorts cannot be permanently deleted.");
+    }
+    
+    if (cls.lecturer_id !== userId) {
+        throw new Error("🚫 Unauthorized.");
+    }
+
     const { error } = await supabase
       .from('classes')
       .delete()
       .eq('id', classId);
+      
     if (error) throw error;
-  },
-
-  /**
-   * Get Students in a Class
-   */
-  async getEnrolledStudents(classId: string) {
-    const { data, error } = await supabase
-      .from('class_enrollments')
-      .select(`
-        student_id,
-        users:student_id (
-          id, full_name, email, avatar_url
-        )
-      `)
-      .eq('class_id', classId);
-
-    if (error) throw error;
-    // Flatten structure
-    return data.map((d: any) => d.users);
   }
 };

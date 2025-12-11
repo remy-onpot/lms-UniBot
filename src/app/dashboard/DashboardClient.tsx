@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase } from '../../lib/supabase';
-import { UserProfile } from '../../types';
+import { UserProfile } from '@/types';
 import { CourseService } from '@/lib/services/course.service';
 import { ClassService } from '@/lib/services/class.service';
 import { StudentDashboard } from '@/components/features/dashboard/StudentDashboard';
@@ -11,64 +10,57 @@ import { DashboardSkeleton } from '@/components/skeletons/DashboardSkeleton';
 import { GamificationService } from '@/lib/services/gamification.service';
 import dynamic from 'next/dynamic';
 
-// Onboarding Wizard (Only loaded if needed)
-const OnboardingWizard = dynamic(() => import('../../components/OnboardingWizard'), { ssr: false });
+// Lazy Load Wizard (Performance Optimization)
+const OnboardingWizard = dynamic(() => import('@/components/OnboardingWizard'), { ssr: false });
 
 interface DashboardClientProps {
   user: any;
-  initialProfile: UserProfile | null;
+  initialProfile: UserProfile;
 }
 
 export default function DashboardClient({ user, initialProfile }: DashboardClientProps) {
-  const [profile, setProfile] = useState<UserProfile | null>(initialProfile);
-  const [data, setData] = useState<any[]>([]); // Holds either Courses (Student) or Classes (Lecturer)
+  const [profile, setProfile] = useState<UserProfile>(initialProfile);
+  const [data, setData] = useState<any[]>([]); // Courses or Classes
   const [loading, setLoading] = useState(true);
   const [showWizard, setShowWizard] = useState(false);
 
   useEffect(() => {
-    // 1. Check Onboarding
-    if (initialProfile && !initialProfile.onboarding_completed) {
+    // 1. Logic: Check Onboarding
+    if (!profile.onboarding_completed) {
       setShowWizard(true);
     }
 
-    // 2. Check Daily Login (Gamification) - Students Only
-    if (user && initialProfile?.role === 'student') {
-      GamificationService.checkDailyLogin(user.id).then((res: any) => {
-         if (res) {
-           setProfile(prev => prev ? ({ ...prev, ...res }) : null);
-         }
+    // 2. Logic: Daily Login Bonus (Students Only)
+    if (profile.role === 'student') {
+      GamificationService.checkDailyLogin(user.id).then((updates: any) => {
+         if (updates) setProfile(prev => ({ ...prev, ...updates }));
       });
     }
-  }, [user, initialProfile]);
 
-  useEffect(() => {
+    // 3. Logic: Fetch Dashboard Data
     const fetchData = async () => {
-      if (!user || !profile) return;
-
       try {
         if (profile.role === 'student') {
-          // STUDENTS: Get "My Courses" (Modules)
-          // They see: "Biology 101", "Calculus I"
+          // Student: Fetch Modules
           const courses = await CourseService.getStudentCourses(user.id);
-          setData(courses);
+          setData(courses || []);
         } else {
-          // LECTURERS: Get "My Classes" (Cohorts)
-          // They see: "Biology Class A", "Math Group B"
-          // Note: isCourseRep logic is handled inside service, but reps mainly use student view unless managing
+          // Lecturer: Fetch Classes (SaaS + Cohort)
+          // We pass 'true' for isRep if they are a rep, though lecturers usually aren't.
           const classes = await ClassService.getDashboardClasses(user.id, profile.role, profile.is_course_rep);
-          setData(classes);
+          setData(classes || []);
         }
       } catch (e) {
-        console.error("Dashboard data load failed:", e);
+        console.error("Dashboard Load Error:", e);
       } finally {
         setLoading(false);
       }
     };
 
     fetchData();
-  }, [user, profile]);
+  }, [user.id, profile.role, profile.is_course_rep]);
 
-  if (loading || !profile) return <DashboardSkeleton />;
+  if (loading) return <DashboardSkeleton />;
 
   return (
     <>
@@ -76,12 +68,12 @@ export default function DashboardClient({ user, initialProfile }: DashboardClien
         <OnboardingWizard 
           userId={user.id} 
           role={profile.role as any} 
-          isCourseRep={profile.is_course_rep || false} 
+          isCourseRep={profile.is_course_rep} 
           onComplete={() => { setShowWizard(false); window.location.reload(); }} 
         />
       )}
 
-      {/* ✅ Role-Based Rendering */}
+      {/* Role-Based UI Rendering */}
       {profile.role === 'lecturer' || profile.role === 'super_admin' ? (
         <LecturerDashboard profile={profile} classes={data} />
       ) : (

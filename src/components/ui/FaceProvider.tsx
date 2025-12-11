@@ -1,43 +1,81 @@
-"use client";
+'use client';
+import { createContext, useContext, useState, useRef, useEffect, ReactNode } from 'react';
 
-import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
-import { FaceAnalyticsService } from '@/lib/services/face-analytics.service';
+// ✅ SINGLE SOURCE OF TRUTH for all face states
+export type FaceState = 'idle' | 'happy' | 'thinking' | 'talking' | 'sleeping' | 'sad' | 'bouncing';
 
-export type FaceState = 'idle' | 'thinking' | 'bouncing' | 'happy' | 'sad';
-
-interface FaceContextValue {
+interface FaceContextType {
   state: FaceState;
-  setState: (s: FaceState) => void;
-  pulse: (s: FaceState, duration?: number, context?: Record<string, any>) => void;
+  setFace: (state: FaceState) => void;
+  /**
+   * Temporarily change the face state (e.g., for 2 seconds after login).
+   * @param tempState The emotion to show
+   * @param duration How long to show it (default 2000ms)
+   * @param metadata Optional context for analytics/debugging (e.g., { event: 'login' })
+   */
+  pulse: (tempState: FaceState, duration?: number, metadata?: Record<string, any>) => void;
 }
 
-// 1. Export the Context itself
-export const FaceContext = createContext<FaceContextValue | undefined>(undefined);
+export const FaceContext = createContext<FaceContextType | undefined>(undefined);
 
-export const FaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export function FaceProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<FaceState>('idle');
-  const timerRef = useRef<number | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const previousStateRef = useRef<FaceState>('idle');
 
-  const pulse = useCallback((s: FaceState, duration = 900, context?: Record<string, any>) => {
-    if (timerRef.current) window.clearTimeout(timerRef.current);
-    setState(s);
-    
-    FaceAnalyticsService.logPulse(s, context).catch(e => {
-      console.error('[FaceProvider] Failed to log pulse:', e);
-    });
-    
-    timerRef.current = window.setTimeout(() => setState('idle'), duration);
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
   }, []);
 
+  const setFace = (newState: FaceState) => {
+    // If we manually set a face, cancel any active pulse to prevent "jumping"
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    setState(newState);
+    previousStateRef.current = newState;
+  };
+
+  const pulse = (tempState: FaceState, duration = 2000, metadata?: Record<string, any>) => {
+    // Optional: Log the event for debugging
+    if (metadata && process.env.NODE_ENV === 'development') {
+      console.debug('🤖 Face Pulse:', tempState, metadata);
+    }
+
+    // 1. If already pulsing, clear the old revert timer
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    
+    // 2. Save current state (only if we are in a stable state)
+    if (!timeoutRef.current) {
+        previousStateRef.current = state;
+    }
+
+    // 3. Set the temporary emotion
+    setState(tempState);
+
+    // 4. Schedule the revert
+    timeoutRef.current = setTimeout(() => {
+      setState(previousStateRef.current);
+      timeoutRef.current = null;
+    }, duration);
+  };
+
   return (
-    <FaceContext.Provider value={{ state, setState, pulse }}>
+    <FaceContext.Provider value={{ state, setFace, pulse }}>
       {children}
     </FaceContext.Provider>
   );
-};
-
-export function useFace() {
-  const ctx = useContext(FaceContext);
-  if (!ctx) throw new Error('useFace must be used within FaceProvider');
-  return ctx;
 }
+
+// Hook for easy access
+export const useFace = () => {
+  const context = useContext(FaceContext);
+  if (!context) {
+    throw new Error('useFace must be used within a FaceProvider');
+  }
+  return context;
+};

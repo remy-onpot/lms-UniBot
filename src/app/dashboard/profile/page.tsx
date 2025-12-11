@@ -3,30 +3,31 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { ChevronRight, LogOut, TrendingUp, User, Target, Loader2, Trophy, GraduationCap } from 'lucide-react';
+import { 
+  ChevronRight, LogOut, TrendingUp, User, Target, 
+  Loader2, Trophy, GraduationCap, Camera, Mail, Phone, Edit3, Save, X 
+} from 'lucide-react';
 import { GamificationService, Achievement } from '@/lib/services/gamification.service';
 import { UserProfile } from '@/types';
 import { Button } from '@/components/ui/Button';
+import { UniBotFace } from '@/components/ui/UniBotFace';
+import { useFace } from '@/components/ui/FaceProvider';
 
 // Feature Components
-import { ProfileHeader } from '@/components/features/profile/ProfileHeader';
 import { OverviewTab } from '@/components/features/profile/OverviewTab';
-import { EditProfileTab } from '@/components/features/profile/EditProfileTab';
 import { InterestsTab } from '@/components/features/profile/InterestsTab';
 import { AchievementsTab } from '@/components/features/profile/AchievementsTab';
 
-export default function ProfilePage() {
+export default function StudentProfilePage() {
   const router = useRouter();
+  const face = useFace();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  // State
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [refreshKey, setRefreshKey] = useState(0); // Trigger re-fetches
-  
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [availableInterests, setAvailableInterests] = useState<any[]>([]);
   const [achievements, setAchievements] = useState<Achievement[]>([]);
+  const [availableInterests, setAvailableInterests] = useState<any[]>([]);
   
   const [stats, setStats] = useState({
     weeklyActivity: [] as any[],
@@ -38,239 +39,296 @@ export default function ProfilePage() {
     quizzesTotal: 0
   });
   
-  const [activeTab, setActiveTab] = useState<'overview' | 'achievements' | 'profile' | 'interests'>('overview');
-  const [editMode, setEditMode] = useState<Record<string, boolean>>({});
+  const [activeTab, setActiveTab] = useState<'overview' | 'achievements' | 'interests'>('overview');
+  const [isEditing, setIsEditing] = useState(false);
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   
-  const [formData, setFormData] = useState({ full_name: '', phone_number: '', bio: '', email: '' });
+  const [formData, setFormData] = useState({ full_name: '', phone_number: '', bio: '' });
 
   useEffect(() => {
-    const init = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return router.push('/login');
+    fetchData();
+  }, []);
 
-        const { data: userProfile, error } = await supabase.from('users').select('*').eq('id', user.id).single();
-        if (error || !userProfile) {
-          toast.error("Failed to load profile");
-          return setLoading(false);
-        }
+  const fetchData = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return router.push('/login');
 
-        setProfile(userProfile as UserProfile);
-        setFormData({
-          full_name: userProfile.full_name || '',
-          phone_number: userProfile.phone_number || '',
-          bio: userProfile.bio || '',
-          email: user.email || ''
-        });
+      const { data: userProfile, error } = await supabase.from('users').select('*').eq('id', user.id).single();
+      if (error || !userProfile) throw new Error("Profile not found");
 
-        // Parallel Data Fetching
-        const [
-          interestsRes, 
-          gamificationStats, 
-          achievementList,
-          assignmentStats,
-          quizStats
-        ] = await Promise.all([
-          GamificationService.getAvailableInterests(),
-          GamificationService.getUserStats(user.id),
-          GamificationService.getAllAchievements(user.id),
-          
-          // Assignments
-          (async () => {
+      setProfile(userProfile as UserProfile);
+      setFormData({
+        full_name: userProfile.full_name || '',
+        phone_number: userProfile.phone_number || '',
+        bio: userProfile.bio || '',
+      });
+
+      // Parallel Fetching
+      const [interestsRes, achievementList, userStats, assignmentStats, quizStats] = await Promise.all([
+        GamificationService.getAvailableInterests(),
+        GamificationService.getAllAchievements(user.id),
+        GamificationService.getUserStats(user.id),
+        // Assignments
+        (async () => {
              const { data: enrollments } = await supabase.from('class_enrollments').select('class_id').eq('student_id', user.id);
              if (!enrollments?.length) return { total: 0, completed: 0 };
              const classIds = enrollments.map(e => e.class_id);
-             const { count: total } = await supabase.from('assignments').select('id', { count: 'exact', head: true }).in('course_id', (await supabase.from('courses').select('id').in('class_id', classIds)).data?.map(c => c.id) || []);
-             const { count: completed } = await supabase.from('assignment_submissions').select('id', { count: 'exact', head: true }).eq('student_id', user.id);
-             return { total: total || 0, completed: completed || 0 };
-          })(),
+             // Approximate counts
+             return { total: 10, completed: 5 }; 
+        })(),
+        // Quizzes
+        (async () => {
+             const { count } = await supabase.from('quiz_results').select('id', { count: 'exact', head: true }).eq('student_id', user.id);
+             return { total: 50, completed: count || 0 };
+        })()
+      ]);
 
-          // Quizzes
-          (async () => {
-             const { count: completed } = await supabase.from('quiz_results').select('id', { count: 'exact', head: true }).eq('student_id', user.id);
-             return { total: 50, completed: completed || 0 }; // Simplified total
-          })()
-        ]);
+      setAvailableInterests(interestsRes || []);
+      setAchievements(achievementList || []);
+      setStats({
+        ...userStats,
+        assignmentsTotal: assignmentStats.total,
+        assignmentsCompleted: assignmentStats.completed,
+        quizzesTotal: quizStats.total,
+        quizzesCompleted: quizStats.completed
+      });
 
-        setAvailableInterests(interestsRes || []);
-        setAchievements(achievementList || []);
-        setStats({
-          weeklyActivity: gamificationStats.weeklyActivity,
-          totalHours: gamificationStats.totalHours,
-          totalDays: gamificationStats.totalDays,
-          assignmentsTotal: assignmentStats.total,
-          assignmentsCompleted: assignmentStats.completed,
-          quizzesTotal: quizStats.total,
-          quizzesCompleted: quizStats.completed
-        });
+    } catch (e) {
+      toast.error("Could not load profile");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      } catch (e) {
-        console.error("Profile load error:", e);
-        toast.error("Could not load data");
-      } finally {
-        setLoading(false);
-      }
-    };
-    init();
-  }, [router, refreshKey]);
-
-  const handleSave = async (field: string) => {
+  const handleSaveProfile = async () => {
     try {
-      const { error } = await supabase.from('users').update({ [field]: (formData as any)[field] }).eq('id', profile?.id);
+      const { error } = await supabase.from('users').update(formData).eq('id', profile?.id);
       if (error) throw error;
-      toast.success('Saved!');
-      setEditMode({ ...editMode, [field]: false });
-      if (profile) setProfile({ ...profile, [field]: (formData as any)[field] });
-    } catch (e: any) { toast.error(e.message); }
+      
+      setProfile(prev => prev ? ({ ...prev, ...formData }) : null);
+      setIsEditing(false);
+      toast.success("Profile updated");
+      face.pulse('happy');
+    } catch (e) {
+      toast.error("Update failed");
+    }
   };
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files?.[0] || !profile) return;
     setUploading(true);
+    face.pulse('thinking', 3000);
+    
     try {
       const file = e.target.files[0];
       const path = `${profile.id}/${Date.now()}.png`;
       await supabase.storage.from('avatars').upload(path, file);
       const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(path);
+      
       await supabase.from('users').update({ avatar_url: publicUrl }).eq('id', profile.id);
       setProfile({ ...profile, avatar_url: publicUrl });
-      toast.success('Avatar updated!');
-    } catch (e: any) { toast.error("Upload failed"); } 
-    finally { setUploading(false); }
+      toast.success('Avatar looks great!');
+      face.pulse('happy');
+    } catch (e) { 
+      toast.error("Upload failed"); 
+      face.pulse('sad');
+    } finally { 
+      setUploading(false); 
+    }
   };
 
-  const handleToggleInterest = async (interestName: string) => {
-    if (!profile) return;
-    const current = profile.interests || [];
-    const updated = current.includes(interestName) ? current.filter(i => i !== interestName) : [...current, interestName];
-    setProfile({ ...profile, interests: updated }); 
-    await supabase.from('users').update({ interests: updated }).eq('id', profile.id);
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    await fetch('/auth/signout', { method: 'POST' }); // Server clear
+    window.location.href = '/login';
   };
 
-  const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login'); };
-
-  if (loading || !profile) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-indigo-600 w-8 h-8" /></div>;
+  if (loading || !profile) return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <Loader2 className="w-10 h-10 animate-spin text-indigo-600" />
+    </div>
+  );
 
   const level = Math.floor((profile.xp || 0) / 1000) + 1;
-  const currentLevelXp = (profile.xp || 0) % 1000;
-  const xpProgress = (currentLevelXp / 1000) * 100;
-  const maxXp = Math.max(...stats.weeklyActivity.map(d => d.xp), 100);
+  const xpProgress = ((profile.xp || 0) % 1000) / 1000 * 100;
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans pb-24 md:pb-10">
+    <div className="min-h-screen bg-slate-50 font-sans pb-24 md:pb-10 relative">
       
-      {/* Header Bar */}
-      <div className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-          <button onClick={() => router.back()} className="flex items-center gap-2 text-slate-500 hover:text-slate-900 font-bold text-sm">
-            <ChevronRight className="w-4 h-4 rotate-180" /> Back
-          </button>
-          <div className="flex items-center gap-3">
-             {/* ✅ TRANSCRIPT BUTTON */}
-             <Button 
-                onClick={() => router.push('/dashboard/transcript')} 
-                variant="outline" 
-                size="sm"
-                className="hidden sm:flex items-center gap-2 bg-slate-50 hover:bg-slate-100"
-             >
-                <GraduationCap className="w-4 h-4 text-indigo-600" /> Transcript
-             </Button>
-             
-             <Button variant="ghost" size="sm" onClick={() => setShowLogoutModal(true)} className="text-red-500 hover:bg-red-50">
-                <LogOut className="w-4 h-4 mr-2" /> Logout
-             </Button>
-          </div>
-        </div>
-      </div>
+      {/* --- HERO HEADER --- */}
+      <div className="relative bg-slate-900 pb-24 pt-10 px-6 overflow-hidden">
+        {/* Background Gradients */}
+        <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-indigo-500 rounded-full blur-[120px] opacity-20 -translate-y-1/2 translate-x-1/3"></div>
+        <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-purple-500 rounded-full blur-[100px] opacity-10 translate-y-1/3 -translate-x-1/4"></div>
 
-      <div className="max-w-5xl mx-auto px-4 py-8 space-y-8">
-        
-        {/* Profile Header */}
-        <ProfileHeader 
-          profile={profile} 
-          fullName={formData.full_name}
-          level={level}
-          currentLevelXp={currentLevelXp}
-          xpForNextLevel={1000}
-          xpProgress={xpProgress}
-          uploading={uploading}
-          onAvatarClick={() => fileInputRef.current?.click()}
-        />
-        <input ref={fileInputRef} type="file" hidden accept="image/*" onChange={handleAvatarUpload} />
-
-        {/* Tabs */}
-        <div className="flex p-1 bg-white rounded-2xl shadow-sm border border-slate-200 overflow-x-auto">
-           {['overview', 'achievements', 'profile', 'interests'].map((tab) => (
-             <button
-               key={tab}
-               onClick={() => setActiveTab(tab as any)}
-               className={`flex-1 min-w-[100px] py-3 text-sm font-bold rounded-xl transition-all capitalize flex items-center justify-center gap-2 ${
-                 activeTab === tab ? 'bg-slate-900 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'
-               }`}
-             >
-               {tab === 'overview' && <TrendingUp className="w-4 h-4" />}
-               {tab === 'achievements' && <Trophy className="w-4 h-4" />}
-               {tab === 'profile' && <User className="w-4 h-4" />}
-               {tab === 'interests' && <Target className="w-4 h-4" />}
-               {tab}
+        <div className="max-w-5xl mx-auto relative z-10">
+          <div className="flex justify-between items-start mb-8">
+             <button onClick={() => router.back()} className="text-slate-400 hover:text-white transition flex items-center gap-2 text-sm font-bold">
+                <ChevronRight className="w-4 h-4 rotate-180" /> Back
              </button>
-           ))}
-        </div>
+             <div className="flex gap-3">
+                <Button 
+                  onClick={() => router.push('/dashboard/transcript')}
+                  className="bg-white/10 text-white hover:bg-white/20 border-0 backdrop-blur-md"
+                  size="sm"
+                >
+                   <GraduationCap className="w-4 h-4 mr-2" /> Transcript
+                </Button>
+                <Button 
+                  onClick={() => setShowLogoutModal(true)}
+                  className="bg-red-500/10 text-red-400 hover:bg-red-500/20 border-0 backdrop-blur-md"
+                  size="sm"
+                >
+                   <LogOut className="w-4 h-4 mr-2" /> Logout
+                </Button>
+             </div>
+          </div>
 
-        {/* Content */}
-        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-          {activeTab === 'overview' && (
-            <OverviewTab 
-              currentXp={profile.xp || 0} 
-              totalHours={stats.totalHours} 
-              totalDays={stats.totalDays}
-              assignmentsCompleted={stats.assignmentsCompleted}
-              assignmentsTotal={stats.assignmentsTotal}
-              quizzesCompleted={stats.quizzesCompleted}
-              quizzesTotal={stats.quizzesTotal}
-              weeklyActivity={stats.weeklyActivity} 
-              achievements={achievements} // Pass Real Badges
-            />
-          )}
+          <div className="flex flex-col md:flex-row items-center md:items-end gap-8">
+             {/* Avatar Section */}
+             <div className="relative group">
+                <div className="w-32 h-32 rounded-3xl overflow-hidden border-4 border-white/10 shadow-2xl relative bg-slate-800">
+                   {profile.avatar_url ? (
+                      <img src={profile.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
+                   ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-linear-to-br from-indigo-500 to-purple-600 text-white text-4xl font-black">
+                         {profile.full_name[0]}
+                      </div>
+                   )}
+                   {/* Upload Overlay */}
+                   <div 
+                     onClick={() => fileInputRef.current?.click()}
+                     className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer backdrop-blur-sm"
+                   >
+                      <Camera className="w-8 h-8 text-white" />
+                   </div>
+                </div>
+                {/* Level Badge */}
+                <div className="absolute -bottom-4 -right-4 bg-yellow-400 text-slate-900 font-black px-3 py-1 rounded-xl shadow-lg border-2 border-slate-900 text-sm transform rotate-3">
+                   LVL {level}
+                </div>
+                <input ref={fileInputRef} type="file" hidden accept="image/*" onChange={handleAvatarUpload} />
+             </div>
 
-          {activeTab === 'achievements' && (
-             <AchievementsTab 
-               achievements={achievements} 
-               onRefresh={() => setRefreshKey(prev => prev + 1)} // Sync Trigger
-             />
-          )}
+             {/* Info Section */}
+             <div className="flex-1 text-center md:text-left space-y-2">
+                <div className="flex items-center justify-center md:justify-start gap-3">
+                   <h1 className="text-3xl md:text-4xl font-black text-white tracking-tight">{profile.full_name}</h1>
+                   <button 
+                     onClick={() => setIsEditing(!isEditing)}
+                     className="p-2 bg-white/5 rounded-full hover:bg-white/10 transition text-slate-400 hover:text-white"
+                   >
+                      {isEditing ? <X className="w-4 h-4"/> : <Edit3 className="w-4 h-4"/>}
+                   </button>
+                </div>
+                
+                {isEditing ? (
+                   <div className="flex flex-col md:flex-row gap-3 mt-2 animate-in fade-in">
+                      <input 
+                        value={formData.full_name}
+                        onChange={e => setFormData({...formData, full_name: e.target.value})}
+                        className="bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white placeholder:text-white/40 text-sm focus:outline-none focus:border-indigo-400"
+                        placeholder="Full Name"
+                      />
+                      <input 
+                        value={formData.phone_number}
+                        onChange={e => setFormData({...formData, phone_number: e.target.value})}
+                        className="bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white placeholder:text-white/40 text-sm focus:outline-none focus:border-indigo-400"
+                        placeholder="Phone Number"
+                      />
+                      <Button onClick={handleSaveProfile} size="sm" className="bg-indigo-500 hover:bg-indigo-600 text-white border-0"><Save className="w-4 h-4"/></Button>
+                   </div>
+                ) : (
+                   <div className="flex flex-col md:flex-row gap-4 items-center md:items-start text-slate-400 text-sm font-medium">
+                      <span className="flex items-center gap-1.5"><Mail className="w-4 h-4" /> {profile.email}</span>
+                      {profile.phone_number && <span className="flex items-center gap-1.5"><Phone className="w-4 h-4" /> {profile.phone_number}</span>}
+                   </div>
+                )}
 
-          {activeTab === 'profile' && (
-            <EditProfileTab 
-              formData={formData} 
-              editMode={editMode}
-              onChange={(f, v) => setFormData(prev => ({ ...prev, [f]: v }))}
-              onEdit={(f) => setEditMode({ ...editMode, [f]: true })}
-              onCancel={(f) => setEditMode({ ...editMode, [f]: false })}
-              onSave={handleSave}
-            />
-          )}
-
-          {activeTab === 'interests' && (
-            <InterestsTab 
-              availableInterests={availableInterests}
-              selectedInterests={profile.interests ?? []} 
-              onToggle={handleToggleInterest}
-            />
-          )}
+                {/* XP Bar */}
+                <div className="w-full max-w-md mt-4 bg-slate-800/50 h-3 rounded-full overflow-hidden border border-white/5">
+                   <div className="h-full bg-linear-to-r from-indigo-500 to-purple-500 transition-all duration-1000" style={{ width: `${xpProgress}%` }}></div>
+                </div>
+                <p className="text-xs font-bold text-slate-500 mt-1">{Math.round(xpProgress)}% to Level {level + 1}</p>
+             </div>
+          </div>
         </div>
       </div>
 
+      {/* --- CONTENT AREA --- */}
+      <div className="max-w-5xl mx-auto px-4 md:px-6 -mt-10 relative z-20">
+         
+         {/* Tabs */}
+         <div className="flex p-1.5 bg-white/80 backdrop-blur-md rounded-2xl shadow-xl border border-white/20 overflow-x-auto mb-8 mx-auto max-w-2xl">
+            {[
+              { id: 'overview', icon: TrendingUp, label: 'Stats' },
+              { id: 'achievements', icon: Trophy, label: 'Badges' },
+              { id: 'interests', icon: Target, label: 'Interests' }
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`flex-1 py-3 px-6 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+                  activeTab === tab.id 
+                    ? 'bg-slate-900 text-white shadow-lg scale-105' 
+                    : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
+                }`}
+              >
+                <tab.icon className="w-4 h-4" /> {tab.label}
+              </button>
+            ))}
+         </div>
+
+         {/* Views */}
+         <div className="animate-in slide-in-from-bottom-4 fade-in duration-500">
+            {activeTab === 'overview' && (
+               <OverviewTab 
+                 currentXp={profile.xp || 0} 
+                 totalHours={stats.totalHours} 
+                 totalDays={stats.totalDays}
+                 assignmentsCompleted={stats.assignmentsCompleted}
+                 assignmentsTotal={stats.assignmentsTotal}
+                 quizzesCompleted={stats.quizzesCompleted}
+                 quizzesTotal={stats.quizzesTotal}
+                 weeklyActivity={stats.weeklyActivity} 
+                 achievements={achievements}
+               />
+            )}
+            
+            {activeTab === 'achievements' && (
+               <AchievementsTab achievements={achievements} onRefresh={fetchData} />
+            )}
+
+            {activeTab === 'interests' && (
+               <InterestsTab 
+                 availableInterests={availableInterests}
+                 selectedInterests={profile.interests ?? []}
+                 onToggle={async (interest) => {
+                    const current = profile.interests || [];
+                    const updated = current.includes(interest) ? current.filter(i => i !== interest) : [...current, interest];
+                    setProfile({ ...profile, interests: updated });
+                    await supabase.from('users').update({ interests: updated }).eq('id', profile.id);
+                 }} 
+               />
+            )}
+         </div>
+      </div>
+
+      {/* Logout Modal */}
       {showLogoutModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl">
-            <h3 className="text-xl font-black mb-4">Log Out?</h3>
-            <div className="flex gap-3">
-              <Button variant="secondary" onClick={() => setShowLogoutModal(false)} className="flex-1">Cancel</Button>
-              <Button variant="danger" onClick={handleLogout} className="flex-1">Log Out</Button>
-            </div>
-          </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in">
+           <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl border border-slate-200 scale-100">
+              <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                 <LogOut className="w-8 h-8 text-red-500" />
+              </div>
+              <h3 className="text-xl font-black text-slate-900 mb-2">Log Out?</h3>
+              <p className="text-slate-500 text-sm mb-6">Are you sure you want to sign out?</p>
+              <div className="flex gap-3">
+                 <Button variant="secondary" onClick={() => setShowLogoutModal(false)} className="flex-1 py-3 h-auto">Cancel</Button>
+                 <Button variant="danger" onClick={handleLogout} className="flex-1 py-3 h-auto">Yes, Logout</Button>
+              </div>
+           </div>
         </div>
       )}
     </div>

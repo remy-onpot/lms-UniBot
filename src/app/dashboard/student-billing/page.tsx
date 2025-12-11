@@ -5,10 +5,10 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { 
   ChevronLeft, Lock, Unlock, Sparkles, 
-  CheckCircle, ShieldCheck, Loader2 
+  CheckCircle, ShieldCheck, Loader2, Zap 
 } from 'lucide-react';
-import { BUSINESS_LOGIC } from '@/lib/constants';
 import { Button } from '@/components/ui/Button';
+import { getAppConfigAction, calculatePriceAction } from '@/app/actions';
 
 interface CourseItem {
   id: string;
@@ -34,6 +34,7 @@ export default function StudentBillingPage() {
   const [loading, setLoading] = useState(true);
   const [classes, setClasses] = useState<ClassGroup[]>([]);
   const [processing, setProcessing] = useState<string | null>(null);
+  const [flashSale, setFlashSale] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -41,10 +42,16 @@ export default function StudentBillingPage() {
 
   const fetchData = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return router.push('/login');
+      // 1. Fetch Dynamic Config & User
+      const [config, { data: { user } }] = await Promise.all([
+        getAppConfigAction(),
+        supabase.auth.getUser()
+      ]);
 
-      // 1. Get Enrolled Classes
+      if (!user) return router.push('/login');
+      setFlashSale(!!config.PRICING.FLASH_SALE_ACTIVE);
+
+      // 2. Get Data
       const { data: enrollments } = await supabase
         .from('class_enrollments')
         .select('class:classes(id, name, access_code)')
@@ -55,7 +62,6 @@ export default function StudentBillingPage() {
           return;
       }
 
-      // 2. Get Access Records
       const now = new Date().toISOString();
       const { data: access } = await supabase
         .from('student_course_access')
@@ -65,65 +71,52 @@ export default function StudentBillingPage() {
 
       const unlockedCourseIds = new Set(access?.map(a => a.course_id).filter(Boolean));
       const unlockedClassIds = new Set(access?.map(a => a.class_id).filter(Boolean));
-      
       const expiryMap = new Map<string, string>();
-      access?.forEach(a => {
-          if(a.class_id) expiryMap.set(a.class_id, a.expires_at);
-      });
+      access?.forEach(a => a.class_id && expiryMap.set(a.class_id, a.expires_at));
 
       const groups: ClassGroup[] = [];
 
       for (const enr of enrollments) {
-        // ✅ FIX: Safely handle array vs object response from Supabase
         const classData = Array.isArray(enr.class) ? enr.class[0] : enr.class;
-        
         if (!classData) continue;
 
-        // Extract fields safely
-        const clsId = (classData as any).id;
-        const clsName = (classData as any).name;
-        const clsCode = (classData as any).access_code;
-
-        // Fetch active courses
         const { data: courses } = await supabase
             .from('courses')
             .select('id, title')
-            .eq('class_id', clsId)
+            .eq('class_id', classData.id)
             .eq('status', 'active');
 
         if (!courses || courses.length === 0) continue;
 
-        const isBundleActive = unlockedClassIds.has(clsId);
+        const isBundleActive = unlockedClassIds.has(classData.id);
         
+        // Calculate Dynamic Prices
+        const singlePrice = config.PRICING.SINGLE_COURSE;
+        const totalSingle = singlePrice * courses.length;
+        
+        // Use Server Action to get exact bundle price (handles discounts/sales)
+        const bundlePrice = await calculatePriceAction('bundle', courses.map(c => c.id));
+
         const courseItems: CourseItem[] = courses.map(c => {
             const isSingleActive = unlockedCourseIds.has(c.id);
-            const isUnlocked = isBundleActive || isSingleActive;
-            
             return {
                 id: c.id,
                 title: c.title,
-                isUnlocked,
+                isUnlocked: isBundleActive || isSingleActive,
                 unlockReason: isBundleActive ? 'bundle' : isSingleActive ? 'single' : null,
-                price: BUSINESS_LOGIC.COHORT.pricing.single_course
+                price: singlePrice
             };
         });
 
-        const allCoursesUnlocked = courseItems.every(c => c.isUnlocked);
-        const singleTotal = courseItems.length * BUSINESS_LOGIC.COHORT.pricing.single_course;
-        
-        // Dynamic Bundle Calculation
-        // TODO: Ideally fetch this count via SQL aggregation for 100% accuracy, but this works for now
-        const bundlePrice = singleTotal * 0.75; 
-
         groups.push({
-          id: clsId,
-          name: clsName,
-          code: clsCode,
+          id: classData.id,
+          name: classData.name,
+          code: classData.access_code,
           courses: courseItems,
           bundlePrice,
-          totalSinglePrice: singleTotal,
-          isFullyUnlocked: allCoursesUnlocked, 
-          expiresAt: expiryMap.get(clsId)
+          totalSinglePrice: totalSingle,
+          isFullyUnlocked: courseItems.every(c => c.isUnlocked), 
+          expiresAt: expiryMap.get(classData.id)
         });
       }
 
@@ -168,16 +161,19 @@ export default function StudentBillingPage() {
 
   if (loading) return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-            <Loader2 className="w-10 h-10 animate-spin text-indigo-600" />
-            <p className="text-slate-500 font-medium">Checking your access...</p>
-        </div>
+        <Loader2 className="w-10 h-10 animate-spin text-indigo-600" />
     </div>
   );
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans pb-24">
-      
+      {/* 🇬🇭 Flash Sale Banner */}
+      {flashSale && (
+        <div className="bg-yellow-400 py-2 px-4 text-center font-black text-slate-900 text-xs md:text-sm shadow-sm animate-pulse">
+           ⚡ FLASH SALE ACTIVE: PRICES SLASHED FOR EXAM WEEK! ⚡
+        </div>
+      )}
+
       <div className="bg-white border-b border-slate-200 sticky top-0 z-20">
         <div className="max-w-5xl mx-auto px-4 py-4 flex items-center gap-3">
           <button onClick={() => router.back()} className="p-2 hover:bg-slate-100 rounded-full transition">
@@ -188,16 +184,9 @@ export default function StudentBillingPage() {
       </div>
 
       <div className="max-w-5xl mx-auto px-4 py-8 space-y-8">
-        <div className="text-center mb-10">
-          <h2 className="text-3xl font-black text-slate-900">Unlock Your Potential</h2>
-          <p className="text-slate-500 mt-2 max-w-xl mx-auto">
-             Your first {BUSINESS_LOGIC.COHORT.free_weeks} weeks are free. Secure your semester by unlocking full access.
-          </p>
-        </div>
-
         {classes.length === 0 && (
           <div className="text-center py-16 border-2 border-dashed border-slate-200 rounded-3xl bg-slate-50/50">
-             <p className="text-slate-400 font-medium">You haven't joined any classes yet.</p>
+             <p className="text-slate-400 font-medium">No classes found.</p>
              <button onClick={() => router.push('/dashboard')} className="text-indigo-600 font-bold text-sm mt-2 hover:underline">
                 Go to Dashboard
              </button>
@@ -222,7 +211,7 @@ export default function StudentBillingPage() {
                    <p className="text-slate-400 text-sm font-mono">{cls.code}</p>
                    {cls.expiresAt && (
                        <p className="text-xs text-indigo-300 mt-2 font-medium">
-                           Bundle Access Valid Until: {new Date(cls.expiresAt).toLocaleDateString()}
+                           Access Valid Until: {new Date(cls.expiresAt).toLocaleDateString()}
                        </p>
                    )}
                 </div>
@@ -241,7 +230,11 @@ export default function StudentBillingPage() {
                         {processing === cls.id ? <Loader2 className="w-4 h-4 animate-spin"/> : <Sparkles className="w-4 h-4 mr-2"/>} 
                         Unlock Semester Bundle
                      </Button>
-                     <p className="text-[10px] text-green-400 mt-2 font-bold text-center w-full">Save 25% instantly</p>
+                     {flashSale ? (
+                         <p className="text-[10px] text-yellow-300 mt-2 font-bold text-center w-full animate-pulse">🔥 FLASH SALE APPLIED</p>
+                     ) : (
+                         <p className="text-[10px] text-green-400 mt-2 font-bold text-center w-full">Save ~25% instantly</p>
+                     )}
                   </div>
                 )}
              </div>
@@ -262,11 +255,11 @@ export default function StudentBillingPage() {
                         </div>
                         <div>
                            <p className={`font-bold text-sm ${course.isUnlocked ? 'text-green-900' : 'text-slate-700'}`}>{course.title}</p>
-                           <p className="text-[10px] font-medium text-slate-500">
-                             {course.isUnlocked 
-                               ? (course.unlockReason === 'bundle' ? 'Included in Bundle' : 'Purchased') 
-                               : `Trial Active (Weeks 1-${BUSINESS_LOGIC.COHORT.free_weeks} Free)`}
-                           </p>
+                           {course.isUnlocked ? (
+                               <p className="text-[10px] font-medium text-green-600">Active</p>
+                           ) : (
+                               <p className="text-[10px] font-medium text-slate-500">Trial Active</p>
+                           )}
                         </div>
                      </div>
 

@@ -1,10 +1,10 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { X, Lock, CheckCircle, Sparkles, Layers, Loader2 } from 'lucide-react';
+import { X, Lock, CheckCircle, Sparkles, Layers, Loader2, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/Button';
 import { supabase } from '@/lib/supabase';
-import { BUSINESS_LOGIC } from '@/lib/constants';
+import { getAppConfigAction, calculatePriceAction } from '@/app/actions';
 
 interface CoursePaywallModalProps {
   courseName: string;
@@ -16,22 +16,30 @@ interface CoursePaywallModalProps {
 export function CoursePaywallModal({ courseName, courseId, classId, onClose }: CoursePaywallModalProps) {
   const [loading, setLoading] = useState<string | null>(null);
   const [bundlePrice, setBundlePrice] = useState(0);
-  const [singlePrice] = useState(BUSINESS_LOGIC.COHORT.pricing.single_course);
+  const [singlePrice, setSinglePrice] = useState(0);
+  const [flashSale, setFlashSale] = useState(false);
 
-  // Fetch bundle price on mount
   useEffect(() => {
-    const fetchBundlePrice = async () => {
-      const { count } = await supabase
+    const initPrices = async () => {
+      // 1. Get Config
+      const config = await getAppConfigAction();
+      setFlashSale(!!config.PRICING.FLASH_SALE_ACTIVE);
+      setSinglePrice(config.PRICING.SINGLE_COURSE);
+
+      // 2. Calculate Bundle
+      const { data: courses } = await supabase
         .from('courses')
-        .select('id', { count: 'exact', head: true })
+        .select('id')
         .eq('class_id', classId)
         .eq('status', 'active');
-      
-      const total = (count || 0) * singlePrice;
-      setBundlePrice(total * 0.75); // 25% Discount Logic matches backend
+        
+      if (courses) {
+        const price = await calculatePriceAction('bundle', courses.map(c => c.id));
+        setBundlePrice(price);
+      }
     };
-    fetchBundlePrice();
-  }, [classId, singlePrice]);
+    initPrices();
+  }, [classId]);
 
   const handlePayment = async (type: 'single' | 'bundle') => {
     setLoading(type);
@@ -64,7 +72,7 @@ export function CoursePaywallModal({ courseName, courseId, classId, onClose }: C
   };
 
   return (
-    <div className="fixed inset-0 z-100 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
       <div className="bg-white rounded-3xl p-0 w-full max-w-lg shadow-2xl relative overflow-hidden">
         
         {/* Header */}
@@ -77,13 +85,21 @@ export function CoursePaywallModal({ courseName, courseId, classId, onClose }: C
           </div>
           <h2 className="text-2xl font-black text-white">Unlock {courseName}</h2>
           <p className="text-slate-400 mt-2 text-sm">
-             Your free trial has ended. Unlock to access weeks {BUSINESS_LOGIC.COHORT.free_weeks + 1}+ and AI features.
+             Your free trial has ended. Unlock this course to continue learning.
           </p>
         </div>
 
         {/* Body */}
         <div className="p-8 space-y-6">
           
+          {/* Flash Sale Banner */}
+          {flashSale && (
+             <div className="bg-yellow-50 text-yellow-800 text-xs font-bold p-2 text-center rounded-lg flex items-center justify-center gap-2">
+                <Zap className="w-3 h-3 text-yellow-600" fill="currentColor"/>
+                Flash Sale Active! Prices reduced for limited time.
+             </div>
+          )}
+
           {/* Option 1: Single Course */}
           <div className="p-5 border-2 border-slate-100 rounded-2xl hover:border-indigo-100 transition-all relative group">
             <div className="flex justify-between items-center mb-3">
@@ -108,7 +124,7 @@ export function CoursePaywallModal({ courseName, courseId, classId, onClose }: C
           {/* Option 2: Bundle (Upsell) */}
           <div className="p-1 rounded-2xl bg-linear-to-r from-indigo-500 to-purple-600 relative shadow-lg transform hover:scale-[1.02] transition-transform">
             <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-yellow-400 text-slate-900 text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider shadow-sm">
-              Best Value • Save 25%
+              Best Value • Save Big
             </div>
             <div className="bg-white rounded-xl p-5">
               <div className="flex justify-between items-center mb-3">
@@ -120,7 +136,7 @@ export function CoursePaywallModal({ courseName, courseId, classId, onClose }: C
                   </div>
                 </div>
                 <div className="text-right">
-                  <span className="text-xl font-black text-indigo-600">₵{bundlePrice || '...'}</span>
+                  <span className="text-xl font-black text-indigo-600">₵{bundlePrice}</span>
                 </div>
               </div>
               <ul className="space-y-2 mb-4">

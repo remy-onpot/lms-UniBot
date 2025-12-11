@@ -1,55 +1,45 @@
-import { createClient } from './supabase/server'; // ✅ Import the SERVER client creator
+import { Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
+import { env } from "./env";
 
-// Define limits
-const LIMITS: { [key: string]: number } = {
-  chat: 50,
-  quiz_generation: 10,
-  grading: 20
+// Create a new Ratelimit instance using an ephemeral cache
+const ratelimit = new Ratelimit({
+  redis: new Redis({
+    url: env.UPSTASH_REDIS_REST_URL,
+    token: env.UPSTASH_REDIS_REST_TOKEN,
+  }),
+  // Sliding window: safer than fixed window (avoids spikes at the hour mark)
+  limiter: Ratelimit.slidingWindow(10, "10 s"), 
+  analytics: true, 
+  prefix: "@lms-unibot",
+});
+
+// Define specific limits per action (requests per window)
+const CONFIG = {
+  chat: { limit: 50, window: "1 h" },      // 50 msgs / hour
+  quiz_generation: { limit: 10, window: "1 h" }, // 10 quizzes / hour
+  grading: { limit: 20, window: "1 h" },   // 20 assignments / hour
 };
 
-const WINDOW_MS = 60 * 60 * 1000; // 1 hour
+export async function checkRateLimit(
+  identifier: string, 
+  action: 'chat' | 'quiz_generation' | 'grading'
+): Promise<{ success: boolean; limit: number; remaining: number; reset: number }> {
+  
+  const rule = CONFIG[action];
+  
+  // Dynamically switch the limiter based on the action
+  const dynamicLimiter = new Ratelimit({
+    redis: new Redis({
+      url: env.UPSTASH_REDIS_REST_URL,
+      token: env.UPSTASH_REDIS_REST_TOKEN,
+    }),
+    limiter: Ratelimit.slidingWindow(rule.limit, rule.window as any),
+    prefix: `@lms/${action}`,
+  });
 
-export async function checkRateLimit(userId: string, action: 'chat' | 'quiz_generation' | 'grading'): Promise<boolean> {
-  try {
-    // ✅ Create a fresh server client for this request
-    const supabase = await createClient();
-    
-    const limit = LIMITS[action] || 50;
-    const now = new Date();
-    const windowStart = new Date(now.getTime() - WINDOW_MS).toISOString();
+  // "identifier" is usually user.id
+  const { success, limit, remaining, reset } = await dynamicLimiter.limit(identifier);
 
-    const { count, error } = await supabase
-      .from('request_logs')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .eq('endpoint', action)
-      .gte('created_at', windowStart);
-
-    if (error) {
-      // Fail OPEN (allow request) if DB is down/missing to prevent blocking users
-      console.error("Rate limit check failed (DB error):", error.message);
-      return true; 
-    }
-
-    const currentCount = count || 0;
-
-    if (currentCount >= limit) {
-      console.warn(`Rate limit exceeded for user ${userId} on action ${action}.`);
-      return false; 
-    }
-
-    // Log request (Fire and forget - don't await)
-    supabase.from('request_logs').insert({
-      user_id: userId,
-      endpoint: action
-    }).then(({ error }) => {
-      if (error) console.error("Failed to log request:", error);
-    });
-
-    return true;
-
-  } catch (err) {
-    console.error("Rate limit check failed (Unknown):", err);
-    return true; 
-  }
+  return { success, limit, remaining, reset };
 }

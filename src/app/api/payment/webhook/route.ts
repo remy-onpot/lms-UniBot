@@ -1,64 +1,126 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import crypto from "crypto";
+import { createClient } from "@supabase/supabase-js";
+import { env } from "@/lib/env";
+
+// Initialize Admin Client (Bypass RLS)
+// ⚠️ NEVER export this client to the browser
+const supabaseAdmin = createClient(
+  env.NEXT_PUBLIC_SUPABASE_URL,
+  env.SUPABASE_SERVICE_ROLE_KEY,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  }
+);
 
 export async function POST(req: Request) {
-    const secret = process.env.PAYSTACK_SECRET_KEY || "";
-    const body = await req.text();
-    const hash = crypto.createHmac('sha512', secret).update(body).digest('hex');
-
-    if (hash !== req.headers.get('x-paystack-signature')) {
-        return NextResponse.json({ error: "Invalid Signature" }, { status: 401 });
+  try {
+    // 1. 🛡️ Validate Paystack Signature
+    // Paystack sends a hash in the header. We must match it.
+    const signature = req.headers.get("x-paystack-signature");
+    if (!signature) {
+      return NextResponse.json({ error: "No signature" }, { status: 401 });
     }
 
-    const event = JSON.parse(body);
+    const body = await req.json(); // Use raw body if possible for strict crypto, but json works often
+    // Re-stringify for hashing (Paystack requires the raw JSON string)
+    const rawBody = JSON.stringify(body);
+    
+    const hash = crypto
+      .createHmac("sha512", env.PAYSTACK_SECRET_KEY)
+      .update(rawBody)
+      .digest("hex");
 
-    if (event.event === 'charge.success') {
-        const supabase = await createClient(); // Use service role key in production for reliability
-        const { metadata, reference, amount } = event.data;
-        const userId = metadata.user_id;
-        const paidAmount = amount / 100; // Convert back to GHS
-
-        // 1. Log Transaction
-        await supabase.from('transactions').insert({
-            user_id: userId,
-            reference: reference,
-            amount: paidAmount,
-            status: 'success',
-            purpose: metadata.type,
-            metadata: metadata
-        });
-
-        // 2. Grant Access
-        const expiryDate = new Date();
-        expiryDate.setMonth(expiryDate.getMonth() + 6);
-
-        if (metadata.type === 'subscription') {
-            await supabase.from('users').update({ 
-                plan_tier: metadata.plan_tier, 
-                subscription_status: 'active' 
-            }).eq('id', userId);
-        }
-        else if (metadata.type === 'class_unlock') {
-            if (metadata.access_type === 'bundle') {
-                await supabase.from('student_course_access').insert({
-                    student_id: userId,
-                    class_id: metadata.class_id,
-                    access_type: 'semester_bundle',
-                    amount_paid: paidAmount,
-                    expires_at: expiryDate.toISOString()
-                });
-            } else {
-                await supabase.from('student_course_access').insert({
-                    student_id: userId,
-                    course_id: metadata.course_id,
-                    access_type: 'single_course',
-                    amount_paid: paidAmount,
-                    expires_at: expiryDate.toISOString()
-                });
-            }
-        }
+    if (hash !== signature) {
+      console.error("🔴 Potential Fraud: Invalid Webhook Signature");
+      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
 
-    return NextResponse.json({ received: true });
+    // 2. Handle the Event
+    const event = body.event;
+    const data = body.data;
+
+    if (event === "charge.success") {
+      const { reference, metadata, amount, currency } = data;
+      const userId = metadata?.user_id;
+
+      if (!userId) {
+        console.error(`⚠️ Payment ${reference} missing user_id in metadata`);
+        return NextResponse.json({ status: "ignored" });
+      }
+
+      // 3. Idempotency: Check if we already processed this ref
+      const { data: existingTx } = await supabaseAdmin
+        .from('transactions')
+        .select('id')
+        .eq('reference', reference)
+        .maybeSingle();
+
+      if (existingTx) {
+        return NextResponse.json({ status: "already_processed" });
+      }
+
+      // 4. Log Transaction (Source of Truth)
+      const { error: txError } = await supabaseAdmin.from('transactions').insert({
+        user_id: userId,
+        reference: reference,
+        amount: amount / 100, // Paystack is in Kobo (cents)
+        status: 'success',
+        purpose: metadata.type || 'unknown',
+        metadata: metadata,
+        currency: currency
+      });
+
+      if (txError) {
+        console.error("🔴 DB Write Error:", txError);
+        return NextResponse.json({ error: "DB Error" }, { status: 500 });
+      }
+
+      // 5. Grant Access / Upgrade Plan logic
+      await grantUserAccess(userId, metadata, amount / 100);
+
+      console.log(`✅ Webhook processed: ${reference} for User ${userId}`);
+    }
+
+    return NextResponse.json({ status: "success" });
+
+  } catch (error: any) {
+    console.error("Webhook Handler Error:", error);
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+  }
+}
+
+/**
+ * 🏗️ Shared Business Logic for Granting Access
+ */
+async function grantUserAccess(userId: string, metadata: any, amountPaid: number) {
+  const expiryDate = new Date();
+  expiryDate.setMonth(expiryDate.getMonth() + 6); // 6 Month Access
+
+  if (metadata.type === 'subscription') {
+    // Upgrade Lecturer Plan
+    await supabaseAdmin.from('users').update({ 
+      plan_tier: metadata.plan_tier, 
+      subscription_status: 'active',
+      subscription_end_date: expiryDate.toISOString() 
+    }).eq('id', userId);
+    
+  } else if (metadata.type === 'class_unlock') {
+    // Unlock Student Content
+    const accessData = {
+      student_id: userId,
+      amount_paid: amountPaid,
+      expires_at: expiryDate.toISOString(),
+      access_type: metadata.access_type,
+      // Handle conditional insertion
+      ...(metadata.access_type === 'bundle' 
+          ? { class_id: metadata.class_id } 
+          : { course_id: metadata.course_id })
+    };
+
+    await supabaseAdmin.from('student_course_access').insert(accessData);
+  }
 }

@@ -1,43 +1,49 @@
-import { BUSINESS_LOGIC, PlanType } from './constants';
+// src/lib/permissions.ts
+import { COHORT_RULES, SAAS_PLANS, PlanTier, UserRole } from './constants';
 
-interface UserContext {
-  role: 'student' | 'lecturer';
-  plan_tier: PlanType;
-  is_course_rep: boolean;
-  classes_owned_count: number;
+interface AccessContext {
+  role: UserRole;
+  class_type: 'saas' | 'cohort'; 
+  has_paid_course?: boolean;
+  has_paid_bundle?: boolean;
+  week_number?: number;
+  is_owner?: boolean;
 }
 
 export const Permissions = {
-  // Can this user create a new class?
-  canCreateClass: (ctx: UserContext) => {
-    if (ctx.role === 'student' && !ctx.is_course_rep) return false;
-    
-    if (ctx.is_course_rep) {
-      // Reps limited by Cohort rules
-      return ctx.classes_owned_count < BUSINESS_LOGIC.COHORT.limits.max_classes;
+  isContentLocked: (ctx: AccessContext) => {
+    // 1. Admins & Owners: Always have access
+    // ✅ This comparison is now valid because UserRole includes 'university_admin'
+    if (ctx.role === 'university_admin' || ctx.role === 'super_admin') return false;
+    if (ctx.role === 'lecturer' && ctx.is_owner) return false;
+
+    // 2. SAAS FIX: Private Lecturers Sponsor their Students
+    if (ctx.class_type === 'saas') {
+      return false; 
     }
 
-    // Lecturers limited by Plan
-    const limits = BUSINESS_LOGIC.PLANS[ctx.plan_tier].limits;
-    return ctx.classes_owned_count < limits.max_classes;
+    // 3. COHORT (University): Student Must Pay
+    if (ctx.class_type === 'cohort') {
+       if (ctx.has_paid_course || ctx.has_paid_bundle) return false;
+
+       // Week 1-2 Free Trial
+       if (ctx.week_number && ctx.week_number <= COHORT_RULES.FREE_TRIAL_WEEKS) {
+         return false; 
+       }
+       
+       return true; // Locked
+    }
+
+    return true; 
   },
 
-  // Is this specific content locked for this student?
-  isContentLocked: (
-    classType: 'standard' | 'cohort',
-    weekNumber: number,
-    hasPaid: boolean
-  ) => {
-    // 1. Standard Classes (Lecturer Owned) are ALWAYS FREE for students
-    if (classType === 'standard') return false;
+  canCreateClass: (currentClassCount: number, tier: PlanTier) => {
+    const plan = SAAS_PLANS[tier as keyof typeof SAAS_PLANS] || SAAS_PLANS.starter;
+    return currentClassCount < plan.limits.max_classes;
+  },
 
-    // 2. Cohort Classes (Rep Owned) logic
-    if (classType === 'cohort') {
-      if (hasPaid) return false; // Unlocked via payment
-      if (weekNumber <= BUSINESS_LOGIC.COHORT.free_weeks) return false; // Week 1 Hook
-      return true; // PAYWALL HIT 🔒
-    }
-
-    return false;
+  canAddStudent: (currentStudentCount: number, tier: PlanTier) => {
+    const plan = SAAS_PLANS[tier as keyof typeof SAAS_PLANS] || SAAS_PLANS.starter;
+    return currentStudentCount < plan.limits.max_students_per_class;
   }
 };

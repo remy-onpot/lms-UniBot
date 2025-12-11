@@ -1,269 +1,170 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
-import { GamificationService } from '@/lib/services/gamification.service';
-import { CourseService } from '@/lib/services/course.service';
-import { FaceAnalyticsService } from '@/lib/services/face-analytics.service';
-import { useFace } from '@/components/ui/FaceProvider';
-import { motion, AnimatePresence } from 'framer-motion';
-import { toast } from 'sonner';
-import { CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { UniBotMascot, MascotEmotion, MascotAction } from '@/components/ui/UniBotMascot';
+import { ArrowLeft, Play, Clock, Zap, Brain, Flame } from 'lucide-react';
+import { motion } from 'framer-motion';
 
-export default function DailyQuizPage() {
+export default function DailyQuizStart() {
   const router = useRouter();
-  const face = useFace();
-  const [step, setStep] = useState<'intro' | 'loading' | 'quiz' | 'result'>('intro');
-  const [questions, setQuestions] = useState<any[]>([]);
-  const [currentQIndex, setCurrentQIndex] = useState(0);
-  const [score, setScore] = useState(0);
-  const [xpEarned, setXpEarned] = useState(0);
-  const [loadingMsg, setLoadingMsg] = useState('');
-  const [userAnswers, setUserAnswers] = useState<Record<number, string>>({});
+  const [hovering, setHovering] = useState(false);
+  const [launching, setLaunching] = useState(false);
+  
+  // Mascot Personality State
+  const [emotion, setEmotion] = useState<MascotEmotion>('cool');
+  const [action, setAction] = useState<MascotAction>('wave');
 
-  // ... (Limit Check useEffect remains the same) ...
+  // Entrance Animation
   useEffect(() => {
-    const checkLimit = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const canPlay = await GamificationService.checkDailyLimit(user.id);
-        if (!canPlay) {
-          toast.error("You've reached your daily limit of 3 quizzes!");
-          router.push('/dashboard');
+    setTimeout(() => {
+        setAction('idle');
+        setEmotion('happy');
+    }, 1000);
+  }, []);
+
+  const handleStartHover = () => {
+    if (launching) return;
+    setHovering(true);
+    setEmotion('surprised'); // "Oh? You ready?"
+    setAction('none');
+    
+    // Quick switch to "Hyped" state
+    setTimeout(() => {
+        if (hovering) { 
+            setEmotion('happy');
+            setAction('dance'); // Excited bounce
         }
-      }
-    };
-    checkLimit();
-  }, [router]);
-
-  // ✅ HELPER: Smart Matching Logic
-  const isAnswerCorrect = (selectedOption: string, correctAnswer: string, index: number) => {
-    if (!selectedOption || !correctAnswer) return false;
-    
-    // Normalize strings
-    const cleanSelected = selectedOption.replace(/^[A-D][\)\.]\s*/, "").trim(); // Remove "A) " prefix
-    const cleanCorrect = correctAnswer.replace(/^[A-D][\)\.]\s*/, "").trim();
-
-    // 1. Exact Text Match (e.g. "Piano" == "Piano")
-    if (cleanSelected.toLowerCase() === cleanCorrect.toLowerCase()) return true;
-    
-    // 2. Prefix Match (e.g. "C) Piano" matches "C")
-    if (selectedOption.startsWith(correctAnswer + ")") || selectedOption.startsWith(correctAnswer + ".")) return true;
-
-    // 3. Index/Letter Match (e.g. Option Index 2 ("C") matches Answer "C")
-    const letterFromIndex = String.fromCharCode(65 + index); // 0=A, 1=B, 2=C
-    if (correctAnswer === letterFromIndex) return true;
-
-    return false;
+    }, 200);
   };
 
-  const startDailyWorkout = async () => {
-    setStep('loading');
-    setLoadingMsg("Analyzing your learning progress...");
-    face.pulse('thinking', 2000);
-    
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("No user");
-      
-      await FaceAnalyticsService.logQuizStart('daily-workout', 'Daily Quiz');
-
-      // Fetch Profile Interests & Course Topics
-      const { data: profile } = await supabase.from('users').select('interests').eq('id', user.id).single();
-      const reviewTopics = await CourseService.getReviewTopics(user.id);
-
-      let topicPool = [...(profile?.interests || [])];
-      if (topicPool.length === 0 && reviewTopics.length === 0) topicPool = ["General Knowledge", "Science", "Technology"];
-      if (reviewTopics.length > 0) topicPool = [...topicPool, ...reviewTopics];
-
-      let selectedTopic = topicPool[Math.floor(Math.random() * topicPool.length)] || "General Knowledge";
-      
-      // Prompt Logic
-      let contextPrompt = `You are a trivia host. Create a fun, easy, and engaging quiz about "${selectedTopic}".`;
-      if (reviewTopics.includes(selectedTopic)) {
-           setLoadingMsg(`Reviewing: ${selectedTopic}...`);
-           contextPrompt = `You are a supportive tutor. Create a beginner-friendly review quiz about "${selectedTopic}".`;
-      } else {
-           setLoadingMsg(`Generating quiz: ${selectedTopic}...`);
-      }
-
-      const res = await fetch('/api/generate-quiz', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          documentText: contextPrompt, 
-          topic: selectedTopic,
-          difficulty: "Easy",
-          numQuestions: 3,
-          type: "Multiple Choice"
-        })
-      });
-
-      if (!res.ok) {
-        if (res.status === 503 || res.status === 429) throw new Error("RATE_LIMIT");
-        throw new Error("Failed to generate quiz");
-      }
-      
-      const data = await res.json();
-      const aiQuestions = data.quiz.map((q: any, i: number) => ({
-        id: i,
-        text: q.question,
-        options: q.options,
-        answer: q.correct_answer,
-        explanation: q.explanation
-      }));
-
-      setQuestions(aiQuestions);
-      setStep('quiz');
-
-    } catch (e: any) {
-      if (e.message === "RATE_LIMIT") toast.info("AI busy, loading backup quiz.");
-      else console.error(e);
-      
-      setQuestions([
-         { id: 1, text: "Which language runs in a web browser?", options: ["Java", "C", "Python", "JavaScript"], answer: "JavaScript", explanation: "JS is the language of the web." },
-         { id: 2, text: "What does CPU stand for?", options: ["Central Process Unit", "Computer Personal Unit", "Central Processing Unit", "Central Processor Unit"], answer: "Central Processing Unit", explanation: "The brain of the computer." },
-         { id: 3, text: "The binary system uses which two numbers?", options: ["0 and 1", "1 and 2", "0 and 9", "1 and 10"], answer: "0 and 1", explanation: "Base-2 system." }
-      ]);
-      setStep('quiz');
-    }
+  const handleStartLeave = () => {
+    if (launching) return;
+    setHovering(false);
+    setEmotion('cool');
+    setAction('idle');
   };
 
-  const handleAnswer = (option: string, index: number) => {
-    setUserAnswers(prev => ({ ...prev, [currentQIndex]: option }));
-
-    const currentQ = questions[currentQIndex];
-    // Use the smart helper
-    const isCorrect = isAnswerCorrect(option, currentQ.answer, index);
-
-    if (isCorrect) {
-      setScore(s => s + 1);
-      toast.success("Correct!");
-    } else {
-      toast.error("Incorrect");
-    }
+  const handleStartClick = () => {
+    setLaunching(true);
+    setEmotion('cool');
+    setAction('backflip'); // Victory flip before launch
     
-    if (currentQIndex + 1 < questions.length) {
-      setCurrentQIndex(i => i + 1);
-    } else {
-      finishQuiz(isCorrect ? score + 1 : score);
-    }
-  };
-
-  const finishQuiz = async (finalScore: number) => {
-    setLoadingMsg("Calculating Results...");
-    setStep('loading');
-    
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const result = await GamificationService.recordActivity(user.id, 'daily_quiz', finalScore, questions.length);
-        setXpEarned(result.xpEarned ?? 0);
-        
-        if ((finalScore / questions.length) >= 0.7) face.pulse('happy', 2000);
-        else face.pulse('sad', 2000);
-        
-        setStep('result');
-      }
-    } catch (error: any) {
-      toast.error(error.message);
-      router.push('/dashboard');
-    }
+    // Wait for flip animation before routing
+    setTimeout(() => {
+        router.push('/dashboard/daily-quiz/play');
+    }, 1000);
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6 font-sans flex flex-col items-center justify-center">
-      <AnimatePresence mode="wait">
-        
-        {step === 'intro' && (
-          <motion.div key="intro" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, y: -20 }} className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center border border-slate-100">
-            <div className="w-24 h-24 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-6 text-5xl shadow-inner">🔥</div>
-            <h1 className="text-3xl font-black text-slate-900 mb-2">Daily Workout</h1>
-            <p className="text-slate-500 mb-8">3 quick questions to keep your streak alive.</p>
-            <button onClick={startDailyWorkout} className="w-full py-4 bg-orange-500 text-white rounded-2xl font-bold text-lg shadow-lg hover:bg-orange-600 transition active:scale-95">Start Workout</button>
-          </motion.div>
-        )}
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 font-sans relative overflow-hidden selection:bg-indigo-500/30">
+      
+      {/* --- CINEMATIC BACKGROUND --- */}
+      {/* Deep Space Gradient */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,var(--tw-gradient-stops))] from-indigo-900/40 via-slate-950 to-slate-950 pointer-events-none"></div>
+      
+      {/* Grid Floor */}
+      <div className="absolute inset-0 bg-[url('/grid.svg')] bg-center mask-[linear-gradient(180deg,white,rgba(255,255,255,0))] opacity-10 pointer-events-none"></div>
 
-        {step === 'loading' && (
-          <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-center">
-            <div className="w-16 h-16 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="font-bold text-slate-600">{loadingMsg}</p>
-          </motion.div>
-        )}
+      {/* Floating Orbs */}
+      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-purple-600/20 rounded-full blur-[128px] animate-pulse pointer-events-none"></div>
+      <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-indigo-600/20 rounded-full blur-[128px] animate-pulse delay-1000 pointer-events-none"></div>
 
-        {step === 'quiz' && questions.length > 0 && (
-          <motion.div key="quiz" initial={{ x: 50, opacity: 0 }} animate={{ x: 0, opacity: 1 }} className="w-full max-w-lg">
-            <div className="flex justify-between mb-6 text-xs font-bold uppercase tracking-widest text-slate-400">
-              <span>Question {currentQIndex + 1}/{questions.length}</span>
-              <span>Streak Mode</span>
+      {/* --- MAIN GAME CARD --- */}
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: "easeOut" }}
+        className="relative z-10 w-full max-w-lg"
+      >
+        {/* Glass Container */}
+        <div className="bg-slate-900/40 backdrop-blur-2xl border border-white/10 rounded-[3rem] p-8 md:p-12 text-center shadow-2xl shadow-indigo-500/10 relative overflow-hidden group/card">
+            
+            {/* Glossy Reflection */}
+            <div className="absolute inset-0 bg-linear-to-br from-white/5 to-transparent opacity-50 pointer-events-none"></div>
+
+            {/* Back Button */}
+            <button 
+              onClick={() => router.back()} 
+              className="absolute top-8 left-8 p-3 rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition-all z-20 group/back"
+            >
+               <ArrowLeft className="w-6 h-6 group-hover/back:-translate-x-1 transition-transform" />
+            </button>
+
+            {/* 🔥 STREAK BADGE (Floating) */}
+            <div className="absolute top-8 right-8 animate-bounce delay-700">
+               <div className="bg-orange-500/10 border border-orange-500/20 text-orange-400 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-orange-900/20">
+                  <Flame className="w-3 h-3 fill-orange-500" /> Hot Streak
+               </div>
             </div>
-            <div className="bg-white p-8 rounded-4xl shadow-lg border border-slate-100 mb-6">
-              <h2 className="text-xl font-bold text-slate-900 leading-relaxed">{questions[currentQIndex].text}</h2>
-            </div>
-            <div className="space-y-3">
-              {questions[currentQIndex].options.map((opt: string, i: number) => (
-                // ✅ PASS INDEX (i) TO HANDLEANSWER
-                <button key={i} onClick={() => handleAnswer(opt, i)} className="w-full p-4 bg-white rounded-xl border-2 border-slate-100 font-bold text-slate-600 hover:border-orange-400 hover:text-orange-600 hover:bg-orange-50 transition text-left">
-                  {opt}
-                </button>
-              ))}
-            </div>
-          </motion.div>
-        )}
 
-        {step === 'result' && (
-          <motion.div key="result" initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="w-full max-w-2xl bg-white p-8 rounded-3xl shadow-xl border border-slate-100 max-h-[85vh] overflow-y-auto">
-             <div className="text-center mb-8">
-                <h2 className="text-3xl font-black text-slate-900 mb-2">Workout Complete!</h2>
-                <div className="inline-flex items-center gap-2 bg-yellow-50 text-yellow-700 px-4 py-2 rounded-full font-bold border border-yellow-100">
-                   <span>⚡ +{xpEarned} XP Earned</span>
-                </div>
-                <p className="text-slate-500 mt-2 font-medium">You scored {score}/{questions.length}</p>
-             </div>
-
-             <div className="space-y-6 mb-8">
-               {questions.map((q, qIdx) => {
-                 const userAnswer = userAnswers[qIdx];
-                 // Find the index of the user's selected string in the options array
-                 const selectedIndex = q.options.indexOf(userAnswer);
-                 const isCorrect = isAnswerCorrect(userAnswer, q.answer, selectedIndex);
-                 
-                 return (
-                   <div key={qIdx} className={`p-5 rounded-2xl border-2 ${isCorrect ? 'border-green-100 bg-green-50/30' : 'border-red-100 bg-red-50/30'}`}>
-                      <div className="flex gap-3">
-                         <div className={`mt-1 shrink-0 ${isCorrect ? 'text-green-600' : 'text-red-500'}`}>
-                            {isCorrect ? <CheckCircle className="w-5 h-5" /> : <XCircle className="w-5 h-5" />}
-                         </div>
-                         <div>
-                            <p className="font-bold text-slate-900 mb-2">{q.text}</p>
-                            
-                            <div className="text-sm space-y-1">
-                               <p className={`${isCorrect ? 'text-green-700' : 'text-red-600 line-through opacity-70'}`}>
-                                 You selected: {userAnswer || "Skipped"}
-                               </p>
-                               {!isCorrect && (
-                                 <p className="text-green-700 font-bold">Correct answer: {q.answer}</p>
-                               )}
-                            </div>
-
-                            {q.explanation && (
-                              <div className="mt-3 flex items-start gap-2 text-xs text-slate-500 bg-white/50 p-3 rounded-lg">
-                                <AlertCircle className="w-4 h-4 shrink-0" />
-                                <p>{q.explanation}</p>
-                              </div>
-                            )}
-                         </div>
-                      </div>
+            {/* 🤖 MASCOT STAGE */}
+            <div className="relative h-64 flex items-center justify-center mb-6">
+                {/* Spotlight Effect */}
+                <div className="absolute bottom-0 w-40 h-10 bg-black/40 blur-xl rounded-full scale-x-150"></div>
+                
+                <div 
+                  className="transition-transform duration-500 ease-spring z-10"
+                  style={{ transform: hovering || launching ? 'scale(1.15) translateY(-15px)' : 'scale(1)' }}
+                >
+                   <div className="relative w-64 h-64 drop-shadow-2xl">
+                       <UniBotMascot 
+                         size={256} 
+                         emotion={emotion} 
+                         action={action} 
+                       />
                    </div>
-                 );
-               })}
-             </div>
+                </div>
+            </div>
 
-             <button onClick={() => router.push('/dashboard')} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition">Return to Dashboard</button>
-          </motion.div>
-        )}
+            {/* TITLE BLOCK */}
+            <div className="space-y-3 mb-10 relative z-10">
+                <h1 className="text-4xl md:text-5xl font-black text-white tracking-tighter drop-shadow-lg">
+                  Daily Workout
+                </h1>
+                <p className="text-indigo-200/80 font-medium text-lg">
+                  Ready to flex your brain?
+                </p>
+            </div>
 
-      </AnimatePresence>
+            {/* STATS ROW */}
+            <div className="grid grid-cols-2 gap-4 mb-10 relative z-10">
+               <div className="bg-slate-800/40 p-4 rounded-3xl border border-white/5 flex flex-col items-center justify-center gap-1 group/stat hover:bg-slate-800/60 transition-colors">
+                  <Clock className="w-6 h-6 text-blue-400 mb-1 group-hover/stat:scale-110 transition-transform" /> 
+                  <span className="text-white font-bold text-lg">5 Mins</span>
+                  <span className="text-slate-500 text-xs font-bold uppercase tracking-wider">Time Limit</span>
+               </div>
+               <div className="bg-slate-800/40 p-4 rounded-3xl border border-white/5 flex flex-col items-center justify-center gap-1 group/stat hover:bg-slate-800/60 transition-colors">
+                  <Zap className="w-6 h-6 text-yellow-400 mb-1 group-hover/stat:scale-110 transition-transform" /> 
+                  <span className="text-white font-bold text-lg">+50 XP</span>
+                  <span className="text-slate-500 text-xs font-bold uppercase tracking-wider">Reward</span>
+               </div>
+            </div>
+
+            {/* 🚀 START BUTTON */}
+            <button 
+              onMouseEnter={handleStartHover}
+              onMouseLeave={handleStartLeave}
+              onClick={handleStartClick}
+              disabled={launching}
+              className="w-full relative group/btn overflow-hidden rounded-2xl bg-white text-slate-900 font-black text-xl py-5 shadow-[0_0_40px_-10px_rgba(255,255,255,0.3)] hover:shadow-[0_0_60px_-15px_rgba(255,255,255,0.5)] transition-all active:scale-[0.98] disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+               <span className="relative z-10 flex items-center justify-center gap-3">
+                 {launching ? 'Launching...' : 'Start Quiz'} 
+                 {!launching && <Play className="w-6 h-6 fill-slate-900 group-hover/btn:translate-x-1 transition-transform" />}
+               </span>
+               
+               {/* Shine Animation */}
+               <div className="absolute inset-0 -translate-x-full group-hover/btn:translate-x-full transition-transform duration-1000 bg-linear-to-r from-transparent via-white/40 to-transparent skew-x-12"></div>
+            </button>
+
+            {/* Footer */}
+            <div className="mt-8 flex items-center justify-center gap-2 opacity-40 hover:opacity-100 transition-opacity">
+               <Brain className="w-4 h-4 text-white" />
+               <span className="text-xs font-bold text-white uppercase tracking-widest">Powered by Gemini 2.5</span>
+            </div>
+
+        </div>
+      </motion.div>
     </div>
   );
 }

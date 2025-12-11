@@ -24,3 +24,114 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+/* UniBot Mascot Animations */
+@keyframes mascot-blink {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.1); }
+}
+
+@keyframes mascot-wave-hand {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(-20deg); }
+  75% { transform: rotate(20deg); }
+  100% { transform: rotate(0deg); }
+}
+.animate-hand-wave {
+  animation: mascot-wave-hand 1s ease-in-out infinite;
+}
+
+@keyframes mascot-dance {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-10px) rotate(-5deg); }
+  75% { transform: translateY(-5px) rotate(5deg); }
+}
+.animate-mascot-dance {
+  animation: mascot-dance 0.8s ease-in-out infinite;
+}
+
+@keyframes mascot-backflip {
+  0% { transform: translateY(0) rotate(0deg); }
+  40% { transform: translateY(-50px) rotate(180deg); }
+  100% { transform: translateY(0) rotate(360deg); }
+}
+.animate-mascot-backflip {
+  animation: mascot-backflip 1s ease-in-out forwards;
+}/* --- UniBot 2.0 Animations --- */
+
+/* Breathing (Idle/Sleep) */
+@keyframes mascot-breathe {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+.animate-mascot-breathe {
+  animation: mascot-breathe 3s ease-in-out infinite;
+}
+
+/* Floating Hands */
+@keyframes float-hands {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+.animate-float-slow {
+  animation: float-hands 4s ease-in-out infinite;
+}
+.animate-float-delayed {
+  animation: float-hands 4s ease-in-out infinite;
+  animation-delay: 2s;
+}
+
+/* Wave */
+@keyframes mascot-wave-hand {
+  0% { transform: rotate(0deg); }
+  25% { transform: rotate(-25deg) translateY(-5px); }
+  50% { transform: rotate(10deg) translateY(-5px); }
+  75% { transform: rotate(-25deg) translateY(-5px); }
+  100% { transform: rotate(0deg); }
+}
+.animate-hand-wave {
+  transform-origin: 165px 110px; /* Pivots around shoulder */
+  animation: mascot-wave-hand 1.2s ease-in-out infinite;
+}
+
+/* Dance (Bounce) */
+@keyframes mascot-dance {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-8px) rotate(-3deg); }
+  75% { transform: translateY(-4px) rotate(3deg); }
+}
+.animate-mascot-dance {
+  animation: mascot-dance 0.6s ease-in-out infinite;
+}
+
+/* 🏆 REAL 3D BACKFLIP */
+@keyframes mascot-backflip-3d {
+  0% { 
+    transform: translateY(0) rotate(0deg) scale(1); 
+  }
+  40% { 
+    transform: translateY(-60px) rotate(-190deg) scale(0.9); 
+  }
+  80% { 
+    transform: translateY(10px) rotate(-360deg) scale(1.1); /* Land heavy */
+  }
+  100% { 
+    transform: translateY(0) rotate(-360deg) scale(1); 
+  }
+}
+.animate-mascot-3d-flip {
+  transform-origin: center;
+  /* This rotate uses CSS rotation which is Z-axis by default, creating a cartwheel */
+  /* To fake a backflip (X-axis) in 2D SVG, we usually squash/stretch or just do a cartwheel. */
+  /* For a "Real Bot" look, a cartwheel/spin is usually cleaner than a scaleY flip. */
+  animation: mascot-backflip-3d 1s cubic-bezier(0.175, 0.885, 0.32, 1.275) 1;
+}
+
+/* Zzz Floating */
+@keyframes mascot-float-up {
+  0% { transform: translateY(0) translateX(0); opacity: 0; }
+  50% { opacity: 1; }
+  100% { transform: translateY(-20px) translateX(10px); opacity: 0; }
+}
+.animate-mascot-float {
+  animation: mascot-float-up 2s linear infinite;
+}

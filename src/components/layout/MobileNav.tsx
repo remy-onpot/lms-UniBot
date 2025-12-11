@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Home, BookOpen, Sparkles, User, Users } from 'lucide-react';
+import { Home, BookOpen, Sparkles, User, Users, GraduationCap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface MobileNavProps {
@@ -11,63 +11,77 @@ interface MobileNavProps {
 export function MobileNav({ role }: MobileNavProps) {
   const pathname = usePathname();
   const isLecturer = role === 'lecturer' || role === 'super_admin';
-
-  // Smart Profile Link
   const profileLink = isLecturer ? '/dashboard/lecturer-profile' : '/dashboard/profile';
 
-  const isActive = (path: string) => pathname === path;
+  // Exact match for dashboard to prevent it lighting up on sub-pages unnecessarily
+  const isActive = (path: string) => {
+      if (path === '/dashboard' && pathname !== '/dashboard') return false;
+      return pathname.startsWith(path);
+  };
 
   return (
-    <div className="fixed bottom-0 left-0 z-50 w-full h-16 bg-white border-t border-slate-200 md:hidden pb-safe safe-area-inset-bottom shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-      <div className={`grid h-full mx-auto max-w-lg relative ${isLecturer ? 'grid-cols-3' : 'grid-cols-4'}`}>
-        
-        {/* 1. Home Tab */}
-        <Link
-          href="/dashboard"
-          className={cn(
-            "inline-flex flex-col items-center justify-center px-5 hover:bg-slate-50 transition active:scale-95",
-            isActive('/dashboard') ? "text-blue-600" : "text-slate-400"
-          )}
-        >
-          <Home className="w-6 h-6 mb-1" />
-          <span className="text-[10px] font-bold">Home</span>
-        </Link>
+    <div className="fixed bottom-0 left-0 z-50 w-full md:hidden">
+      
+      {/* Floating Glass Container */}
+      <div className="absolute bottom-0 w-full h-20 bg-white/90 backdrop-blur-xl border-t border-slate-200/60 pb-safe shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.1)]">
+        <div className="grid h-full grid-cols-4 mx-auto max-w-md items-center">
+          
+          <NavLink 
+            href="/dashboard" 
+            active={isActive('/dashboard')} 
+            icon={Home} 
+            label="Home" 
+          />
 
-        {/* 2. Courses Tab (Students Only) */}
-        {!isLecturer && (
-          <Link
-            href="/dashboard#my-courses" // ✅ FIX: Anchors to the course list
-            className="inline-flex flex-col items-center justify-center px-5 hover:bg-slate-50 transition active:scale-95 text-slate-400"
-          >
-            <BookOpen className="w-6 h-6 mb-1" />
-            <span className="text-[10px] font-bold">Courses</span>
-          </Link>
-        )}
+          <NavLink 
+            href={isLecturer ? '/dashboard/lecturer-profile' : '/dashboard/courses'} 
+            active={isActive(isLecturer ? '/dashboard/lecturer-profile' : '/dashboard/courses')} 
+            icon={isLecturer ? GraduationCap : BookOpen} 
+            label={isLecturer ? 'Classes' : 'Courses'} 
+          />
 
-        {/* 3. AI Chat FAB (Floating Action Button) */}
-        <div className="relative flex items-center justify-center">
-            <Link
-              href="/ai-assistant"
-              className="absolute -top-6 flex items-center justify-center w-14 h-14 bg-linear-to-r from-indigo-600 to-purple-600 rounded-full shadow-lg shadow-indigo-200 border-4 border-white hover:scale-105 transition-transform active:scale-95"
-            >
-              <Sparkles className="w-6 h-6 text-white" />
-            </Link>
-            <span className="absolute bottom-1 text-[10px] font-bold text-indigo-600">AI Chat</span>
+          {/* Center FAB (Floating Action Button) - Overflows the bar */}
+          <div className="relative -top-6 flex justify-center">
+             <Link
+                href="/ai-assistant"
+                className="w-14 h-14 rounded-full bg-slate-900 text-white flex items-center justify-center shadow-xl shadow-indigo-500/30 border-4 border-white active:scale-95 transition-transform"
+             >
+                <Sparkles className="w-6 h-6 text-indigo-400" />
+             </Link>
+             <span className="absolute -bottom-6 text-[10px] font-bold text-slate-500">AI Tutor</span>
+          </div>
+
+          <NavLink 
+            href={profileLink} 
+            active={isActive(profileLink)} 
+            icon={isLecturer ? Users : User} 
+            label="Profile" 
+          />
+
         </div>
-
-        {/* 4. Profile Tab */}
-        <Link
-          href={profileLink}
-          className={cn(
-            "inline-flex flex-col items-center justify-center px-5 hover:bg-slate-50 transition active:scale-95",
-            isActive(profileLink) ? "text-blue-600" : "text-slate-400"
-          )}
-        >
-          {isLecturer ? <Users className="w-6 h-6 mb-1" /> : <User className="w-6 h-6 mb-1" />}
-          <span className="text-[10px] font-bold">Profile</span>
-        </Link>
-
       </div>
     </div>
   );
+}
+
+function NavLink({ href, active, icon: Icon, label }: any) {
+    return (
+        <Link
+          href={href}
+          className="flex flex-col items-center justify-center gap-1 group"
+        >
+          <div className={cn(
+              "p-1.5 rounded-xl transition-all duration-300",
+              active ? "bg-indigo-50 text-indigo-600" : "text-slate-400 group-hover:text-slate-600"
+          )}>
+             <Icon className={cn("w-6 h-6", active && "fill-indigo-600/20")} />
+          </div>
+          <span className={cn(
+              "text-[10px] font-bold transition-colors",
+              active ? "text-indigo-600" : "text-slate-400"
+          )}>
+            {label}
+          </span>
+        </Link>
+    );
 }

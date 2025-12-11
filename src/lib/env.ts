@@ -13,11 +13,17 @@ const envSchema = z.object({
   // AI
   GOOGLE_GENERATIVE_AI_API_KEY: z.string().min(1),
 
+  // Payment (Paystack)
+  PAYSTACK_SECRET_KEY: z.string().min(1),
+
+  // 🛡️ SECURITY: Upstash Redis (New for Rate Limiting)
+  UPSTASH_REDIS_REST_URL: z.string().url(),
+  UPSTASH_REDIS_REST_TOKEN: z.string().min(1),
+
   // Analytics
   NEXT_PUBLIC_GA_ID: z.string().optional(),
 });
 
-// Validate process.env
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {

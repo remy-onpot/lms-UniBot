@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { MobileNav } from "@/components/layout/MobileNav";
+import { Sidebar } from "@/components/layout/Sidebar"; // ✅ New Component
 
 export default async function DashboardLayout({
   children,
@@ -9,12 +10,8 @@ export default async function DashboardLayout({
 }) {
   const supabase = await createClient();
 
-  // 1. Fetch User & Role securely on the server
   const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user) {
-    redirect("/login");
-  }
+  if (!user) redirect("/login");
 
   const { data: profile } = await supabase
     .from('users')
@@ -26,13 +23,24 @@ export default async function DashboardLayout({
 
   return (
     <div className="min-h-screen bg-slate-50">
-      {/* Main Content Area - Add padding for bottom nav */}
-      <div className="pb-20 md:pb-0">
-        {children}
-      </div>
+      
+      {/* 🖥️ Desktop Sidebar (Hidden on Mobile) */}
+      <Sidebar role={role} />
 
-      {/* Persistent Bottom Nav (Visible only on Mobile) */}
+      {/* 📱 Mobile Bottom Nav (Hidden on Desktop) */}
       <MobileNav role={role} />
+
+      {/* Layout Wrapper:
+         md:pl-64 -> Pushes content right to make room for Sidebar on Desktop
+         pb-24 -> Pushes content up to make room for Bottom Nav on Mobile
+         md:pb-0 -> Removes bottom padding on Desktop
+      */}
+      <main className="transition-all duration-300 md:pl-64 pb-24 md:pb-0 min-h-screen">
+        <div className="max-w-7xl mx-auto">
+           {children}
+        </div>
+      </main>
+
     </div>
   );
 }
