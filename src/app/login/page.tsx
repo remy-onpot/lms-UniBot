@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { UniBotMascot, MascotEmotion, MascotAction } from '@/components/ui/UniBotMascot';
-import { FaceAnalyticsService } from '@/lib/services/face-analytics.service';
+// FaceAnalyticsService removed
 import { Mail, Lock, User, Key, Check, Loader2, ArrowRight } from 'lucide-react';
 
 export default function LoginPage() {
@@ -32,28 +32,29 @@ export default function LoginPage() {
     
     // 🧠 UNI-BOT: Thinking/Processing
     setMascotEmotion('thinking');
-    setMascotAction('dance'); // Bouncing while thinking
+    setMascotAction('dance');
 
     try {
       if (isLogin) {
+        // --- LOGIN LOGIC ---
         if (!email || !password) throw new Error('Please enter your email and password');
 
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
 
-        // 🎉 SUCCESS: BACKFLIP!
+        // 🎉 SUCCESS
         toast.success('Welcome back!');
         setMascotEmotion('cool');
         setMascotAction('backflip');
         
-        await FaceAnalyticsService.logLogin('email');
+        // Removed: FaceAnalyticsService.logLogin('email');
         
-        // Wait for animation to finish
+        // Wait for animation, then redirect to dashboard
         await new Promise((res) => setTimeout(res, 1500));
         window.location.href = '/dashboard';
 
       } else {
-        // SIGN UP
+        // --- SIGN UP LOGIC (Securely setting user metadata for DB trigger) ---
         if (!fullName.trim()) throw new Error('Please enter your full name');
         if (role === 'ta' && !taCode.trim()) throw new Error('TA invite code is required');
 

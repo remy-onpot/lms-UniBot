@@ -1,13 +1,17 @@
+// src/middleware.ts (FINAL, SECURE, LOOP-FREE REWRITE)
+
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
+  // 1. Initialize the response object that will carry the refreshed cookies
   let response = NextResponse.next({
     request: {
       headers: request.headers,
     },
   })
 
+  // 2. Create the Supabase client (Session Refresh happens here)
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -16,13 +20,10 @@ export async function middleware(request: NextRequest) {
         getAll() {
           return request.cookies.getAll()
         },
+        /** * 🏆 CRITICAL FIX: Set the refreshed session tokens directly on 
+         * the response object, ensuring they are sent back to the client.
+         */
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => request.cookies.set(name, value))
-          response = NextResponse.next({
-            request: {
-              headers: request.headers,
-            },
-          })
           cookiesToSet.forEach(({ name, value, options }) =>
             response.cookies.set(name, value, options)
           )
@@ -31,57 +32,51 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  // 1. Refresh Session (This is critical for Supabase SSR)
   const { data: { user } } = await supabase.auth.getUser()
   const path = request.nextUrl.pathname;
 
   // 🛡️ SECURITY CONFIGURATION
-  // Define paths that require authentication
   const isProtectedRoute = 
     path.startsWith('/dashboard') || 
     path.startsWith('/super-admin') ||
     path.startsWith('/ai-assistant') ||
-    // Protect API routes that perform mutations or access sensitive data
+    // Protect API routes
     (path.startsWith('/api/') && !path.startsWith('/api/auth') && !path.startsWith('/api/payment/webhook'));
 
-  // Define paths that are ONLY for guests (e.g. Login)
-  const isAuthRoute = path.startsWith('/login') || path.startsWith('/auth');
+  // Define paths that are ONLY for guests (Login, Sign-Up). 
+  // ✅ FIX: Exclude /auth/callback to prevent the loop after successful exchange.
+  const isAuthRoute = 
+    (path.startsWith('/login') || path.startsWith('/auth')) && 
+    !path.startsWith('/auth/callback');
 
-  // 2. LOGIC: Redirect Unauthenticated Users
+  // 3. LOGIC: Redirect Unauthenticated Users (Accessing protected resources)
   if (isProtectedRoute && !user) {
-    // A. API Request? -> Return 401 JSON (Don't redirect APIs)
+    // If it's an API call, return 401 JSON
     if (path.startsWith('/api/')) {
         return NextResponse.json(
             { error: 'Unauthorized: Please log in first.' }, 
             { status: 401 }
         );
     }
-    // B. Page Request? -> Redirect to Login
+    // If it's a Page request, redirect to Login
     const redirectUrl = new URL('/login', request.url);
-    // Optional: Save the return URL to redirect back after login
     redirectUrl.searchParams.set('next', path); 
     return NextResponse.redirect(redirectUrl);
   }
 
-  // 3. LOGIC: Redirect Authenticated Users (Guest Only Routes)
+  // 4. LOGIC: Redirect Authenticated Users (Accessing guest-only routes)
   if (isAuthRoute && user) {
-    // If they are already logged in, send them to dashboard
+    // If they are already logged in and try to hit /login, send them to /dashboard
     return NextResponse.redirect(new URL('/dashboard', request.url));
   }
 
+  // 5. Return the response, containing the refreshed cookies (if any)
   return response
 }
 
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - public folder
-     * - auth callback routes (handled explicitly)
-     */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    /* Match all paths except static assets */
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|pdf)$).*)',
   ],
 }

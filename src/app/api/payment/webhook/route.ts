@@ -1,10 +1,10 @@
+// src/app/api/payment/webhook/route.ts
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 import { env } from "@/lib/env";
 
 // Initialize Admin Client (Bypass RLS)
-// ⚠️ NEVER export this client to the browser
 const supabaseAdmin = createClient(
   env.NEXT_PUBLIC_SUPABASE_URL,
   env.SUPABASE_SERVICE_ROLE_KEY,
@@ -19,15 +19,14 @@ const supabaseAdmin = createClient(
 export async function POST(req: Request) {
   try {
     // 1. 🛡️ Validate Paystack Signature
-    // Paystack sends a hash in the header. We must match it.
     const signature = req.headers.get("x-paystack-signature");
     if (!signature) {
       return NextResponse.json({ error: "No signature" }, { status: 401 });
     }
 
-    const body = await req.json(); // Use raw body if possible for strict crypto, but json works often
-    // Re-stringify for hashing (Paystack requires the raw JSON string)
-    const rawBody = JSON.stringify(body);
+    // Must clone the request to read body twice (once for verification, once for processing)
+    const rawBody = await req.text(); 
+    const body = JSON.parse(rawBody);
     
     const hash = crypto
       .createHmac("sha512", env.PAYSTACK_SECRET_KEY)
@@ -94,11 +93,13 @@ export async function POST(req: Request) {
 }
 
 /**
- * 🏗️ Shared Business Logic for Granting Access
+ * 🏆 REFACTORED: Shared Business Logic for Granting Access.
+ * Now targets the unified 'class_enrollments' table for student access.
  */
 async function grantUserAccess(userId: string, metadata: any, amountPaid: number) {
   const expiryDate = new Date();
   expiryDate.setMonth(expiryDate.getMonth() + 6); // 6 Month Access
+  const classId = metadata.class_id;
 
   if (metadata.type === 'subscription') {
     // Upgrade Lecturer Plan
@@ -109,18 +110,37 @@ async function grantUserAccess(userId: string, metadata: any, amountPaid: number
     }).eq('id', userId);
     
   } else if (metadata.type === 'class_unlock') {
-    // Unlock Student Content
-    const accessData = {
-      student_id: userId,
-      amount_paid: amountPaid,
-      expires_at: expiryDate.toISOString(),
-      access_type: metadata.access_type,
-      // Handle conditional insertion
-      ...(metadata.access_type === 'bundle' 
-          ? { class_id: metadata.class_id } 
-          : { course_id: metadata.course_id })
-    };
+    // Unlock Student Content (B2C Model)
+    if (!classId) {
+        throw new Error("Missing class_id for class_unlock payment.");
+    }
+    
+    // 1. Check if enrollment record exists first (student must use class code first)
+    const { data: existingEnrollment } = await supabaseAdmin
+        .from('class_enrollments')
+        .select('id')
+        .eq('student_id', userId)
+        .eq('class_id', classId)
+        .maybeSingle();
 
-    await supabaseAdmin.from('student_course_access').insert(accessData);
+    if (!existingEnrollment) {
+        // If they paid but haven't joined, create the enrollment record with payment info
+        await supabaseAdmin.from('class_enrollments').insert({
+            student_id: userId,
+            class_id: classId,
+            has_paid: true,
+            access_type: metadata.access_type,
+            expires_at: expiryDate.toISOString(),
+        });
+    } else {
+        // 2. Update the existing enrollment record to activate payment
+        await supabaseAdmin.from('class_enrollments')
+            .update({
+                has_paid: true,
+                access_type: metadata.access_type,
+                expires_at: expiryDate.toISOString(),
+            })
+            .eq('id', existingEnrollment.id);
+    }
   }
 }

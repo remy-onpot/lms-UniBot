@@ -1,3 +1,5 @@
+// src/app/layout.tsx (FINAL REWRITE - Fixing Duplication)
+
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -24,7 +26,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "UniBot LMS",
   description: "AI-Powered Classroom Assistant",
-  manifest: "/manifest.json", // 🚀 PWA Link
+  manifest: "/manifest.json", 
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
@@ -79,20 +81,18 @@ export default function RootLayout({
               enableSystem
               disableTransitionOnChange
             >
-              {/* FaceProvider enables global UniBot face control */}
-              <FaceProviderClient>
-                {children}
-                {/* ✅ WRAP HERE */}
-      <SyncProvider>
-        {children}
-      </SyncProvider>
-              </FaceProviderClient>
+              {/* 🏆 FIX: Nest providers and render {children} ONLY ONCE */}
+              <SyncProvider> 
+                <FaceProviderClient>
+                  {children}
+                </FaceProviderClient>
+              </SyncProvider>
+              
               <Toaster position="top-right" richColors closeButton />
             </ThemeProvider>
           </QueryProvider>
         </ErrorBoundary>
       </body>
     </html>
-    
   );
 }

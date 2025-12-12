@@ -1,17 +1,22 @@
+// src/lib/services/billing.service.ts
 import { createClient } from "@/lib/supabase/server";
-import { COHORT_RULES } from "@/lib/constants";
+import { COHORT_RULES } from "@/lib/constants"; // Assuming this file exists
 
 export const BillingService = {
   
+  /**
+   * REFACTORED: Queries the UNIFIED 'class_enrollments' table for access status.
+   */
   async getStudentAccessStatus(studentId: string, courseId: string, classId: string) {
     const supabase = await createClient();
     const now = new Date().toISOString();
 
-    const { data: access, error } = await supabase
-      .from('student_course_access')
-      .select('access_type, expires_at')
+    // Check enrollment for the class, as access grants class-wide privileges.
+    const { data: enrollment, error } = await supabase
+      .from('class_enrollments')
+      .select('access_type, expires_at, has_paid')
       .eq('student_id', studentId)
-      .or(`course_id.eq.${courseId},class_id.eq.${classId}`) 
+      .eq('class_id', classId) 
       .gt('expires_at', now) 
       .order('expires_at', { ascending: false })
       .limit(1)
@@ -21,11 +26,16 @@ export const BillingService = {
         console.error("Access Check Error:", error);
         return { has_paid_course: false, has_paid_bundle: false, expires_at: null };
     }
+    
+    // Must have an active, paid enrollment record
+    if (!enrollment || !enrollment.has_paid) {
+         return { has_paid_course: false, has_paid_bundle: false, expires_at: null };
+    }
 
     return {
-      has_paid_course: access?.access_type === 'single_course',
-      has_paid_bundle: access?.access_type === 'semester_bundle',
-      expires_at: access?.expires_at
+      has_paid_course: enrollment.access_type === 'single_course',
+      has_paid_bundle: enrollment.access_type === 'semester_bundle',
+      expires_at: enrollment.expires_at
     };
   },
 
@@ -59,7 +69,7 @@ export const BillingService = {
       if (!data) return false;
       
       if (data.subscription_status === 'active') {
-         const expiry = new Date(data.subscription_end_date);
+         const expiry = new Date(data.subscription_end_date!);
          return expiry > new Date(); 
       }
       

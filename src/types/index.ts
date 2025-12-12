@@ -13,8 +13,11 @@ export type PlanTier = z.infer<typeof PlanTierSchema>;
 export const AccessTypeSchema = z.enum(['single_course', 'semester_bundle']);
 export type AccessType = z.infer<typeof AccessTypeSchema>;
 
+export const MaterialCategorySchema = z.enum(['handout', 'supplementary', 'recording']);
+export type MaterialCategory = z.infer<typeof MaterialCategorySchema>;
+
 // =============================================================================
-// 2. USER & PROFILE (Gamification + Business Logic)
+// 2. USER & PROFILE
 // =============================================================================
 
 export const UserProfileSchema = z.object({
@@ -24,30 +27,29 @@ export const UserProfileSchema = z.object({
   role: RoleSchema,
   avatar_url: z.string().url().optional().nullable(),
   
-  // 💼 Business Logic
+  // Business Logic
   plan_tier: PlanTierSchema.default('starter'),
   subscription_status: z.enum(['active', 'inactive', 'past_due']).default('inactive'),
   subscription_end_date: z.string().datetime().optional().nullable(),
   is_course_rep: z.boolean().default(false),
-  university_id: z.string().optional(),
+  university_id: z.string().uuid().optional().nullable(), // Corrected type to UUID/null
   onboarding_completed: z.boolean().default(false),
 
-  // 🎮 Gamification (Restored)
+  // Gamification (Cached DB values)
   xp: z.number().default(0),
   gems: z.number().default(0),
   current_streak: z.number().default(0),
-  longest_streak: z.number().default(0),
-  streak_freezes: z.number().default(0),
+  // Removed redundant longest_streak, streak_freezes
   last_activity_date: z.string().datetime().optional(),
   last_login_date: z.string().datetime().optional(),
   
-  // 👤 Social & Customization (Restored)
-  bio: z.string().optional(),
+  // Profile
+  bio: z.string().optional().nullable(),
   interests: z.array(z.string()).optional(),
-  phone_number: z.string().optional(),
+  phone_number: z.string().optional().nullable(),
   profile_frame: z.string().default('default'),
   owned_frames: z.array(z.string()).default(['default']),
-  achievements: z.array(z.custom<Achievement>()).optional(), // Recursive type handled below
+  achievements: z.array(z.custom<Achievement>()).optional(), 
 });
 
 export type UserProfile = z.infer<typeof UserProfileSchema>;
@@ -61,10 +63,8 @@ export const ClassSchema = z.object({
   name: z.string().min(3),
   lecturer_id: z.string().uuid().nullable(), 
   access_code: z.string().length(6),
-  created_at: z.string().datetime(),
-  
-  // ⚡ Optimization: Cached type to avoid joins
   type: z.enum(['saas', 'cohort']).default('cohort'),
+  created_at: z.string().datetime(),
   
   users: z.object({
     plan_tier: PlanTierSchema
@@ -90,7 +90,7 @@ export const CourseSchema = z.object({
 export type Course = z.infer<typeof CourseSchema>;
 
 // =============================================================================
-// 4. LEARNING CONTENT (Topics, Materials, Quizzes) - RESTORED
+// 4. LEARNING CONTENT (Topics, Materials, Quizzes) - Unified
 // =============================================================================
 
 export interface Topic {
@@ -103,13 +103,17 @@ export interface Topic {
   quizzes: { id: string }[];
 }
 
+/**
+ * FINAL MATERIAL INTERFACE: Reflects the single merged DB table.
+ */
 export interface Material {
   id: string;
   title: string;
   file_url: string;
   file_type: string;
+  category: MaterialCategory; // New unified column
   is_main_handout: boolean;
-  content_text?: string;
+  content_text?: string | null; // Must be nullable
   course_id: string;
 }
 
@@ -153,7 +157,7 @@ export interface QuizResult {
 }
 
 // =============================================================================
-// 5. ASSIGNMENTS & GRADING (Strictly Typed)
+// 5. ASSIGNMENTS & GRADING
 // =============================================================================
 
 export const AIGradeSchema = z.object({
@@ -163,7 +167,7 @@ export const AIGradeSchema = z.object({
     reasoning: z.string(),
     strengths: z.array(z.string()),
     weaknesses: z.array(z.string()),
-  }),
+  }).nullable(), // MUST be nullable to work with optional fields
   is_ai_generated: z.boolean().default(true),
 });
 
@@ -183,18 +187,16 @@ export const AssignmentSubmissionSchema = z.object({
   id: z.string().uuid(),
   assignment_id: z.string().uuid(),
   student_id: z.string().uuid(),
-  content_text: z.string().optional(),
-  file_url: z.string().url().optional(),
+  content_text: z.string().optional().nullable(),
+  file_url: z.string().url().optional().nullable(),
   
-  // Grading
-  ai_grade: z.number().optional(), // Legacy support
-  ai_feedback: z.string().optional(), // Legacy support
-  ai_is_detected: z.boolean().default(false),
-  ai_breakdown: AIGradeSchema.optional().nullable(), // New strict schema
+  // Unified Grading Fields
+  score: z.number().optional().nullable(), // Use score/feedback as the source of truth
+  feedback: z.string().optional().nullable(),
+  graded_by: z.enum(['ai', 'lecturer']).optional().nullable(),
   
-  lecturer_grade: z.number().optional().nullable(),
-  lecturer_feedback: z.string().optional().nullable(),
-  attempt_count: z.number().default(1),
+  // AI-Specific breakdown data
+  ai_breakdown: AIGradeSchema.optional().nullable(),
   
   submitted_at: z.string().datetime(),
   users: z.object({
@@ -218,7 +220,6 @@ export interface ChatSession {
   material_id?: string | null;
 }
 
-// We map 'Message' to your chat UI needs
 export const MessageSchema = z.object({
   id: z.string(),
   role: z.enum(['user', 'assistant', 'system']),
@@ -229,7 +230,7 @@ export const MessageSchema = z.object({
 });
 
 export type Message = z.infer<typeof MessageSchema>;
-export type ChatMessage = Message; // Alias for backward compatibility
+export type ChatMessage = Message; // Alias
 
 export interface AIGeneratedQuestion {
   question: string;
@@ -239,7 +240,7 @@ export interface AIGeneratedQuestion {
 }
 
 // =============================================================================
-// 7. GAMIFICATION & SHOP (Restored)
+// 7. GAMIFICATION & SHOP (Fixing Export Errors)
 // =============================================================================
 
 export interface Achievement {
@@ -265,6 +266,8 @@ export interface FrameItem {
   cssClass: string; 
 }
 
+/** * FINAL SHOP ITEM EXPORT: Fixes the 'no exported member ShopItem' error.
+ */
 export interface ShopItem {
   id: string;
   name: string;
@@ -274,6 +277,8 @@ export interface ShopItem {
   asset_value: string;
 }
 
+/** * FINAL ANNOUNCEMENT EXPORT: Fixes the 'no exported member Announcement' error.
+ */
 export interface Announcement {
   id: string;
   title: string;
@@ -282,21 +287,25 @@ export interface Announcement {
 }
 
 // =============================================================================
-// 8. BILLING & ACCESS (New Logic)
+// 8. BILLING & ACCESS (Golden Schema: Use class_enrollments)
 // =============================================================================
 
-export const StudentAccessSchema = z.object({
+/**
+ * REPLACEMENT FOR StudentAccess: The core table is now `class_enrollments`.
+ */
+export const ClassEnrollmentSchema = z.object({
   id: z.string().uuid(),
   student_id: z.string().uuid(),
+  class_id: z.string().uuid(),
+  joined_at: z.string().datetime(),
+  
+  // Payment Status (migrated fields)
+  has_paid: z.boolean().default(false),
   access_type: AccessTypeSchema,
-  course_id: z.string().uuid().optional().nullable(),
-  class_id: z.string().uuid().optional().nullable(),
-  expires_at: z.string().datetime(),
-  amount_paid: z.number().min(0),
-  currency: z.string().default('GHS'),
+  expires_at: z.string().datetime().optional().nullable(),
 });
 
-export type StudentAccess = z.infer<typeof StudentAccessSchema>;
+export type ClassEnrollment = z.infer<typeof ClassEnrollmentSchema>;
 
 export const TransactionSchema = z.object({
   id: z.string().uuid(),
