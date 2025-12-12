@@ -110,6 +110,7 @@ export interface Material {
   file_type: string;
   is_main_handout: boolean;
   content_text?: string;
+  course_id: string;
 }
 
 export interface Question {

@@ -30,9 +30,8 @@ export const AssignmentService = {
     
     const { data: { publicUrl } } = supabase.storage.from('assignment-submissions').getPublicUrl(path);
 
-    // 2. AI Grading (Simulated for now, replace with actual AI call if needed)
-    // In a real scenario, you'd call your grading API here.
-    const mockScore = Math.floor(Math.random() * (meta.maxPoints - 60 + 1) + 60); // Random score 60-100
+    // 2. AI Grading (Mock for now)
+    const mockScore = Math.floor(Math.random() * (meta.maxPoints - 60 + 1) + 60);
 
     // 3. Save Record
     const { data, error } = await supabase.from('assignment_submissions').insert([{
@@ -48,42 +47,55 @@ export const AssignmentService = {
     return data;
   },
 
+  // ✅ UPDATED: Fetches university_id for the Export
   async getSubmissions(assignmentId: string) {
     const { data, error } = await supabase
       .from('assignment_submissions')
-      .select('*, student:users(full_name, email, avatar_url)')
+      .select('*, student:users(full_name, email, avatar_url, university_id)')
       .eq('assignment_id', assignmentId);
       
     if (error) throw error;
     return data as AssignmentSubmission[];
   },
 
-  /**
-   * ✅ PROFESSIONAL DELETE: 
-   * 1. Finds all student submissions.
-   * 2. Deletes their files from Storage (Saves money).
-   * 3. Deletes the Assignment Record (Cascades to submissions table).
-   */
+  // ✅ NEW: Fetches Matrix Data for Excel Export
+  async getCourseGradebook(courseId: string) {
+    // 1. Get all assignments
+    const { data: assignments } = await supabase
+      .from('assignments')
+      .select('id, title, total_points')
+      .eq('course_id', courseId)
+      .order('due_date');
+
+    if (!assignments || assignments.length === 0) return { assignments: [], submissions: [] };
+
+    // 2. Get all submissions for these assignments
+    const { data: submissions } = await supabase
+      .from('assignment_submissions')
+      .select(`
+        *, 
+        student:users(id, full_name, university_id, email)
+      `)
+      .in('assignment_id', assignments.map(a => a.id));
+
+    return { 
+      assignments, 
+      submissions: submissions || [] 
+    };
+  },
+
   async delete(assignmentId: string) {
-    // 1. Fetch all submissions to get their file paths
-    const { data: submissions, error: fetchError } = await supabase
+    // 1. Clean up storage
+    const { data: submissions } = await supabase
       .from('assignment_submissions')
       .select('file_url')
       .eq('assignment_id', assignmentId);
 
-    if (fetchError) throw fetchError;
-
-    // 2. Delete files from Storage
     if (submissions && submissions.length > 0) {
       const filesToRemove = submissions
         .map(sub => {
            if (!sub.file_url) return null;
-           // Extract relative path: "submissions/assignment_id/student_id_timestamp.pdf"
-           // Adjust splitting logic based on your actual storage URL structure
            try {
-             // Example: .../assignment-submissions/submissions/123/456.pdf
-             // We need: "submissions/123/456.pdf"
-             // If bucket is 'assignment-submissions', path starts after it.
              const parts = sub.file_url.split('/assignment-submissions/');
              return parts.length > 1 ? parts[1] : null;
            } catch (e) { return null; }
@@ -91,21 +103,12 @@ export const AssignmentService = {
         .filter(path => path !== null) as string[];
 
       if (filesToRemove.length > 0) {
-        const { error: storageError } = await supabase.storage
-          .from('assignment-submissions') // Ensure this matches your bucket name
-          .remove(filesToRemove);
-          
-        if (storageError) console.error("Failed to cleanup submission files:", storageError);
+        await supabase.storage.from('assignment-submissions').remove(filesToRemove);
       }
     }
 
-    // 3. Delete the Assignment from DB
-    // (This automatically deletes the rows in 'assignment_submissions' due to CASCADE)
-    const { error: deleteError } = await supabase
-      .from('assignments')
-      .delete()
-      .eq('id', assignmentId);
-
-    if (deleteError) throw deleteError;
+    // 2. Delete Record
+    const { error } = await supabase.from('assignments').delete().eq('id', assignmentId);
+    if (error) throw error;
   },
 };

@@ -3,13 +3,15 @@ import { useState } from 'react';
 import { FileText, Download, Sparkles, Lock, BrainCircuit, ExternalLink } from 'lucide-react';
 import { Material } from '@/types';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+// ✅ NEW: Import Offline Tools
+import { OfflineDownloadButton } from './OfflineDownloadButton';
+import { SmartFileLink } from './SmartFileLink';
 
 interface CourseMaterialsProps {
   mainHandout: Material | null;
   supplementaryMaterials: Material[];
-  hasBundleAccess: boolean; // ✅ Checks if student owns the full semester bundle
-  onUnlockBundle: () => void; // ✅ Trigger Paywall
+  hasBundleAccess: boolean;
+  onUnlockBundle: () => void;
   
   // Legacy props
   canEdit: boolean;
@@ -34,7 +36,7 @@ export function CourseMaterials({
 
   const handleSolvePastQuestion = (materialId: string) => {
     if (!hasBundleAccess && !canEdit) {
-      onUnlockBundle(); // 🔒 Lock for students without bundle
+      onUnlockBundle(); 
       return;
     }
     router.push(`/dashboard/solver/${materialId}`);
@@ -42,24 +44,44 @@ export function CourseMaterials({
 
   return (
     <div className="space-y-8">
-      {/* HANDOUT */}
+      {/* HANDOUT SECTION */}
       <section>
         <h2 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
           <span className="text-red-700 bg-red-50 p-1.5 rounded-lg"><FileText className="w-5 h-5" /></span> 
           Main Handout
         </h2>
         {mainHandout ? (
-          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-center group hover:border-indigo-200 transition">
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 group hover:border-indigo-200 transition">
              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-red-100 text-red-700 rounded-xl flex items-center justify-center font-bold text-xs">PDF</div>
+                <div className="w-12 h-12 bg-red-100 text-red-700 rounded-xl flex items-center justify-center font-bold text-xs shrink-0">PDF</div>
                 <div>
                   <p className="font-bold text-slate-900 group-hover:text-indigo-600 transition">{mainHandout.title}</p>
                   <p className="text-xs text-slate-500">Core Reading Material</p>
                 </div>
              </div>
-             <a href={mainHandout.file_url} target="_blank" className="px-4 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl text-sm hover:bg-slate-200 flex items-center gap-2">
-               <ExternalLink className="w-4 h-4" /> View
-             </a>
+             
+             <div className="flex items-center gap-2 w-full sm:w-auto">
+                {/* ✅ SMART LINK (Works Offline) */}
+                <SmartFileLink 
+                  id={mainHandout.id}
+                  fileUrl={mainHandout.file_url}
+                  className="px-4 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl text-sm hover:bg-slate-200 flex items-center gap-2 transition"
+                >
+                   <ExternalLink className="w-4 h-4" /> View
+                </SmartFileLink>
+
+                {/* ✅ DOWNLOAD TOGGLE */}
+                <div className="shrink-0">
+                  <OfflineDownloadButton 
+                    id={mainHandout.id}
+                    courseId={mainHandout.course_id}
+                    fileUrl={mainHandout.file_url}
+                    fileName={mainHandout.title}
+                    type="handout"
+                    variant="icon"
+                  />
+                </div>
+             </div>
           </div>
         ) : (
           canEdit ? (
@@ -72,7 +94,7 @@ export function CourseMaterials({
         )}
       </section>
 
-      {/* SUPPLEMENTARY (Upsell Area) */}
+      {/* SUPPLEMENTARY SECTION */}
       <section>
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
@@ -90,15 +112,15 @@ export function CourseMaterials({
         <div className="grid gap-3">
           {supplementaryMaterials.map(m => (
             <div key={m.id} className="flex justify-between items-center p-4 bg-white rounded-xl border border-slate-200 hover:border-blue-300 transition">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center text-slate-400">
+              <div className="flex items-center gap-3 overflow-hidden">
+                <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center text-slate-400 shrink-0">
                     <FileText className="w-5 h-5" />
                 </div>
-                <span className="text-sm font-bold text-slate-700 truncate max-w-[180px] sm:max-w-xs">{m.title}</span>
+                <span className="text-sm font-bold text-slate-700 truncate">{m.title}</span>
               </div>
               
-              <div className="flex gap-2">
-                {/* 🔒 AI SOLVER BUTTON */}
+              <div className="flex gap-2 shrink-0">
+                {/* AI SOLVER BUTTON */}
                 <button 
                   onClick={() => handleSolvePastQuestion(m.id)}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
@@ -108,12 +130,27 @@ export function CourseMaterials({
                   }`}
                 >
                   {(hasBundleAccess || canEdit) ? <Sparkles className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
-                  {(hasBundleAccess || canEdit) ? 'AI Solve' : 'Unlock Solver'}
+                  {(hasBundleAccess || canEdit) ? 'AI Solve' : 'Unlock'}
                 </button>
 
-                <a href={m.file_url} target="_blank" className="p-2 text-slate-400 hover:text-blue-600 bg-slate-50 rounded-lg hover:bg-blue-50">
-                  <Download className="w-4 h-4" />
-                </a>
+                {/* ✅ SMART VIEW */}
+                <SmartFileLink 
+                  id={m.id}
+                  fileUrl={m.file_url}
+                  className="p-2 text-slate-400 hover:text-blue-600 bg-slate-50 rounded-lg hover:bg-blue-50 transition"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                </SmartFileLink>
+
+                {/* ✅ OFFLINE TOGGLE */}
+                <OfflineDownloadButton 
+                   id={m.id}
+                   courseId={m.course_id}
+                   fileUrl={m.file_url}
+                   fileName={m.title}
+                   type="handout" // Keeping as 'handout' to match strict types for now
+                   variant="icon"
+                />
               </div>
             </div>
           ))}

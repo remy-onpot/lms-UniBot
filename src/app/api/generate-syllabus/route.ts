@@ -1,57 +1,60 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { google } from '@ai-sdk/google';
+import { generateObject } from 'ai';
+import { z } from 'zod'; // Strict Schema Validation
 import { NextResponse } from "next/server";
-import { env } from '@/lib/env';
 import { createClient } from "@/lib/supabase/server";
-
-const genAI = new GoogleGenerativeAI(env.GOOGLE_GENERATIVE_AI_API_KEY || "");
 
 export async function POST(req: Request) {
   try {
-    // 1. Get both contexts
     const { syllabusText, mainHandoutTocText, courseId } = await req.json();
 
-    if (!syllabusText) throw new Error("Syllabus text missing");
+    if (!syllabusText || syllabusText.length < 50) {
+      return NextResponse.json(
+        { error: "Syllabus content is empty. This might be a scanned PDF. Please upload a text-based PDF." }, 
+        { status: 400 }
+      );
+    }
 
-    // 2. Prompt Gemini (The "Cross-Reference" Logic)
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash", generationConfig: { responseMimeType: "application/json" } });
-    
-    const prompt = `
-      You are an expert Curriculum Designer.
-      
-      TASK:
-      1. Analyze the SYLLABUS below to identify the weekly topics.
-      2. For each topic, look at the TEXTBOOK TABLE OF CONTENTS (TOC) to find the corresponding page range.
-      
-      SYLLABUS CONTEXT:
-      ${syllabusText.slice(0, 15000)}
+    // 1. Define the Strict Schema (The AI cannot break this)
+    const syllabusSchema = z.object({
+      topics: z.array(z.object({
+        week_number: z.number(),
+        title: z.string(),
+        description: z.string(),
+        learning_objectives: z.array(z.string()).optional(), // Bonus feature
+        start_page: z.number().default(0),
+        end_page: z.number().default(0)
+      }))
+    });
 
-      TEXTBOOK TOC CONTEXT:
-      ${mainHandoutTocText ? mainHandoutTocText.slice(0, 20000) : "No textbook provided."}
+    // 2. The Ghostwriter Prompt
+    const { object } = await generateObject({
+      model: google('gemini-1.5-pro-latest'), // Use Pro for better reasoning on "Messy" outlines
+      schema: syllabusSchema,
+      prompt: `
+        You are an expert University Curriculum Designer.
+        
+        TASK:
+        1. Extract the weekly schedule from the SYLLABUS TEXT.
+        2. Cross-reference with the TEXTBOOK TOC to find page ranges.
+        
+        SYLLABUS:
+        ${syllabusText.slice(0, 20000)}
 
-      INSTRUCTIONS:
-      - If you find the topic in the Textbook TOC, use those page numbers.
-      - If you cannot find the topic in the Textbook (or no textbook provided), set start_page and end_page to 0.
-      - Ignore "Recommended Books" or bibliography lists in the syllabus; focus on the Schedule/Weekly Plan.
+        TEXTBOOK TOC:
+        ${mainHandoutTocText ? mainHandoutTocText.slice(0, 10000) : "No textbook provided."}
 
-      Return JSON Array:
-      [
-        { 
-          "week_number": 1, 
-          "title": "Topic Title", 
-          "description": "Brief summary",
-          "start_page": number,
-          "end_page": number
-        }
-      ]
-    `;
+        RULES:
+        - If the syllabus lists dates instead of weeks, infer the week number (1, 2, 3...).
+        - If you can't find the page range in the TOC, leave start_page/end_page as 0.
+        - Ignore bibliography or grading policies.
+      `,
+    });
 
-    const result = await model.generateContent(prompt);
-    const topics = JSON.parse(result.response.text());
-
-    // 3. Save to DB
+    // 3. Save to DB (Cleaner logic)
     const supabase = await createClient();
     
-    // Fetch Main Handout ID to link
+    // Get the textbook ID
     const { data: handout } = await supabase
         .from('materials')
         .select('id')
@@ -59,24 +62,29 @@ export async function POST(req: Request) {
         .eq('is_main_handout', true)
         .single();
 
-    const { error } = await supabase.from('course_topics').insert(
-      topics.map((t: any) => ({
-        course_id: courseId,
-        material_id: handout?.id || null, // Link to the textbook
-        week_number: t.week_number,
-        title: t.title,
-        description: t.description,
-        start_page: t.start_page,
-        end_page: t.end_page
-      }))
-    );
+    const dbPayload = object.topics.map((t) => ({
+      course_id: courseId,
+      material_id: handout?.id || null,
+      week_number: t.week_number,
+      title: t.title,
+      description: t.description,
+      // Store learning objectives in description if you don't have a column for it
+      // or simply omit them if your DB schema doesn't support it yet
+      start_page: t.start_page,
+      end_page: t.end_page
+    }));
+
+    const { error } = await supabase.from('course_topics').insert(dbPayload);
 
     if (error) throw error;
 
-    return NextResponse.json({ success: true, count: topics.length });
+    return NextResponse.json({ success: true, count: object.topics.length });
 
   } catch (error: any) {
-    console.error(error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("Ghostwriter Error:", error);
+    return NextResponse.json(
+      { error: error.message || "Failed to generate syllabus" }, 
+      { status: 500 }
+    );
   }
 }

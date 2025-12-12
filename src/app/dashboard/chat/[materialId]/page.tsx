@@ -1,285 +1,141 @@
 'use client';
-import { useEffect, useState, useRef } from 'react';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+
+import { useEffect, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { toast } from 'sonner';
-import { ChevronLeft, Lock, X, Minimize2, Maximize2 } from 'lucide-react';
-import { ChatWindow, Message } from '@/components/features/chat/ChatWindow';
-import { CoursePaywallModal } from '@/components/features/student/CoursePaywallModal';
+import { useAIChat } from '@/hooks/useAIChat';
+import { ChatWindow } from '@/components/features/chat/ChatWindow';
+import { PDFViewer } from '@/components/features/chat/PDFViewer'; // Ensure you have this
+import { UniBotMascot } from '@/components/ui/UniBotMascot';
 import { Button } from '@/components/ui/Button';
-import { UniBotLogo } from '@/components/ui/UniBotLogo';
+import { ArrowLeft, MessageSquare, X, Maximize2, Minimize2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
-export default function ChatPage() {
+export default function StudyRoomPage() {
   const params = useParams();
-  const searchParams = useSearchParams();
   const router = useRouter();
-  
   const materialId = params?.materialId as string;
-  const pageRange = searchParams?.get('pages'); 
-  const topicId = searchParams?.get('topicId');
-
-  const [loading, setLoading] = useState(true);
-  const [material, setMaterial] = useState<any>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [topicContext, setTopicContext] = useState<any>(null);
   
-  // Layout State
-  const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
+  const [material, setMaterial] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [userId, setUserId] = useState<string>("");
+  
+  // UI State
+  const [isChatOpen, setIsChatOpen] = useState(false); // Mobile Drawer State
+  const [isDesktopSplit, setIsDesktopSplit] = useState(true); // Desktop Toggle
 
-  // Access Control
-  const [hasAccess, setHasAccess] = useState(false);
-  const [showPaywall, setShowPaywall] = useState(false);
-  const [courseContext, setCourseContext] = useState<any>(null);
-
+  // 1. Fetch Context
   useEffect(() => {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return router.push('/login');
+      setUserId(user.id);
 
-      // 1. Fetch Material & Context
-      const { data: mat, error } = await supabase
-        .from('materials')
-        .select(`*, course:courses(id, title, class_id, classes(lecturer_id))`)
-        .eq('id', materialId)
-        .single();
-
-      if (error || !mat) {
-        toast.error("Material not found");
-        return router.push('/dashboard');
-      }
-
-      setMaterial(mat);
-      setCourseContext({
-        courseId: mat.course.id,
-        courseName: mat.course.title,
-        classId: mat.course.class_id
-      });
-
-      // 2. Fetch Topic Context (for AI Persona)
-      if (topicId) {
-        const { data: topic } = await supabase.from('course_topics').select('title, description').eq('id', topicId).single();
-        if (topic) setTopicContext(topic);
-      }
-
-      // 3. Fetch Chat History (Scoped to Topic if available)
-      let query = supabase
-        .from('chat_messages')
-        .select('*')
-        .eq('material_id', materialId)
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: true });
-        
-      if (topicId) {
-          query = query.eq('topic_id', topicId); // ✅ SCOPED TO WEEK
-      } else {
-          query = query.is('topic_id', null); // General document chat
-      }
-
-      const { data: history } = await query;
-
-      if (history) {
-        setMessages(history.map(h => ({
-            id: h.id,
-            role: h.role as 'user' | 'assistant',
-            content: h.content
-        })));
-      }
-
-      // 4. Access Logic
-      const isOwner = mat.course.classes.lecturer_id === user.id;
-      if (isOwner) {
-        setHasAccess(true);
-      } else {
-        const now = new Date().toISOString();
-        const { data: access } = await supabase
-          .from('student_course_access')
-          .select('id')
-          .eq('student_id', user.id)
-          .or(`course_id.eq.${mat.course.id},class_id.eq.${mat.course.class_id}`)
-          .gt('expires_at', now)
-          .maybeSingle();
-
-        // Allow access if Purchased OR if it's a "Free Week" (Logic usually handled before entry, but safe fallback)
-        // For Chat page specifically, we assume if they got here with a valid Topic ID for week 1/2, it's allowed.
-        if (access) setHasAccess(true);
-        else {
-             // Check Week Number if we have topicId
-             if (topicId) {
-                 const { data: t } = await supabase.from('course_topics').select('week_number').eq('id', topicId).single();
-                 if (t && t.week_number <= 2) {
-                     setHasAccess(true); // Allow Free Trial
-                 } else {
-                     setHasAccess(false);
-                     setShowPaywall(true);
-                 }
-             } else {
-                 setHasAccess(false);
-                 setShowPaywall(true);
-             }
-        }
-      }
-      
+      const { data: mat } = await supabase.from('materials').select('*').eq('id', materialId).single();
+      if (mat) setMaterial(mat);
       setLoading(false);
     };
-
     init();
-  }, [materialId, topicId, router]);
+  }, [materialId, router]);
 
-  const saveMessageToDb = async (role: 'user' | 'assistant', content: string) => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    
-    await supabase.from('chat_messages').insert({
-        user_id: user.id,
-        material_id: materialId,
-        topic_id: topicId || null, // ✅ Save Context
-        role,
-        content
-    });
-  };
+  // 2. Initialize AI
+  const { messages, isLoading: aiLoading, sendMessage, attachments, setAttachments } = useAIChat(
+    material?.content_text,
+    userId,
+    materialId // ✅ This ensures unique history per file
+  );
 
-  const handleSendMessage = async (content: string) => {
-    if (!hasAccess) return setShowPaywall(true);
+  const displayMessages = messages.map(m => ({
+    ...m,
+    role: (m.role === 'system' ? 'assistant' : m.role) as 'user' | 'assistant'
+  }));
 
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', content };
-    setMessages(prev => [...prev, userMsg]);
-    saveMessageToDb('user', content);
-    
-    setIsProcessing(true);
-
-    try {
-      // ... inside handleSendMessage ...
-
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [...messages, userMsg],
-          materialId: materialId,
-          pageRange: pageRange || undefined,
-          // ✅ CRITICAL: Send topicId so server can verify Week #
-          topicId: topicId || undefined, 
-          topicContext: topicContext || undefined 
-        }),
-      });
-
-      if (!response.ok) throw new Error("Failed to send message");
-      if (!response.body) throw new Error("No response stream");
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let aiContent = "";
-      const aiMsgId = (Date.now() + 1).toString();
-
-      setMessages(prev => [...prev, { id: aiMsgId, role: 'assistant', content: '', isStreaming: true }]);
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        aiContent += chunk;
-        setMessages(prev => prev.map(msg => msg.id === aiMsgId ? { ...msg, content: aiContent } : msg));
-      }
-
-      setMessages(prev => prev.map(msg => msg.id === aiMsgId ? { ...msg, isStreaming: false } : msg));
-      saveMessageToDb('assistant', aiContent);
-
-    } catch (e) {
-      toast.error("UniBot encountered an error.");
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  if (loading) return <div className="h-screen bg-slate-50"></div>;
+  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-slate-50"><UniBotMascot size={100} emotion="thinking" action="fly"/></div>;
 
   return (
-    <div className="fixed inset-0 overflow-hidden bg-slate-50 font-sans flex flex-col">
+    <div className="h-screen w-full bg-slate-50 flex flex-col overflow-hidden">
       
       {/* HEADER */}
-      <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 shrink-0 z-30 shadow-sm">
-         <div className="flex items-center gap-3">
-            <button onClick={() => router.back()} className="p-2 hover:bg-slate-100 rounded-full transition">
-               <ChevronLeft className="w-5 h-5 text-slate-600" />
-            </button>
-            <div className="flex flex-col">
-               <h1 className="font-bold text-slate-800 text-sm truncate max-w-[200px] md:max-w-md">
-                 {topicContext?.title || material?.title}
-               </h1>
-               {pageRange && <span className="text-[10px] text-slate-500">Reading Pages {pageRange}</span>}
-            </div>
-         </div>
-      </header>
-
-      {/* WORKSPACE */}
-      <div className="flex-1 flex relative">
-         
-         {/* PDF VIEWER */}
-         <div className="w-full md:w-[55%] h-full bg-slate-200 relative">
-            {hasAccess ? (
-               <iframe 
-                 src={`${material?.file_url}#toolbar=0`} 
-                 className="w-full h-full"
-                 title="PDF"
-               />
-            ) : (
-               <div className="h-full flex flex-col items-center justify-center p-8 text-center">
-                  <Lock className="w-12 h-12 text-slate-400 mb-4" />
-                  <p className="text-slate-500 font-medium">Content Locked</p>
-                  <Button onClick={() => setShowPaywall(true)} className="mt-4 bg-indigo-600 text-white">Unlock</Button>
-               </div>
-            )}
-         </div>
-
-         {/* CHAT (Responsive Overlay) */}
-         <div className={`
-            fixed md:relative inset-0 md:inset-auto z-40 md:z-0
-            w-full md:w-[45%] h-full bg-white border-l border-slate-200 shadow-2xl md:shadow-none
-            transition-transform duration-300 ease-in-out
-            ${isMobileChatOpen ? 'translate-y-0' : 'translate-y-full md:translate-y-0'}
-         `}>
-            {/* Mobile Close Handle */}
-            <div className="md:hidden h-10 flex items-center justify-center border-b border-slate-100 bg-slate-50" onClick={() => setIsMobileChatOpen(false)}>
-               <div className="w-12 h-1.5 bg-slate-300 rounded-full"></div>
-            </div>
-
-            <ChatWindow 
-               messages={messages}
-               isLoading={isProcessing}
-               onSendMessage={handleSendMessage}
-               documentTitle={topicContext?.title || material?.title}
-            />
-         </div>
+      <div className="h-14 bg-white border-b flex items-center justify-between px-4 shrink-0 z-20">
+        <div className="flex items-center gap-3">
+          <button onClick={() => router.back()} className="p-2 hover:bg-slate-100 rounded-full"><ArrowLeft className="w-5 h-5 text-slate-600" /></button>
+          <div className="max-w-[200px] md:max-w-md">
+             <h1 className="font-bold text-slate-900 text-sm truncate">{material?.title}</h1>
+             <p className="text-[10px] text-slate-500 font-medium uppercase">Study Mode</p>
+          </div>
+        </div>
+        {/* Desktop Toggle */}
+        <div className="hidden md:flex">
+           <Button variant="ghost" size="sm" onClick={() => setIsDesktopSplit(!isDesktopSplit)}>
+             {isDesktopSplit ? <Maximize2 className="w-4 h-4 mr-2"/> : <Minimize2 className="w-4 h-4 mr-2"/>}
+             {isDesktopSplit ? 'Focus PDF' : 'Split View'}
+           </Button>
+        </div>
       </div>
 
-      {/* MOBILE FAB */}
-      <div className="md:hidden fixed bottom-6 right-6 z-50">
-        <button 
-          onClick={() => setIsMobileChatOpen(!isMobileChatOpen)}
-          className={`
-            w-16 h-16 rounded-full shadow-2xl flex items-center justify-center transition-all duration-300 overflow-hidden
-            ${isMobileChatOpen ? 'bg-red-500 rotate-90' : 'bg-white border-4 border-indigo-500'}
-          `}
-        >
-          {isMobileChatOpen ? (
-            <X className="w-8 h-8 text-white" />
-          ) : (
-            <div className="w-full h-full p-2 bg-indigo-50">
-               <UniBotLogo state="happy" size="md" /> 
-            </div>
-          )}
-        </button>
-      </div>
+      {/* CONTENT AREA */}
+      <div className="flex-1 flex relative overflow-hidden">
+        
+        {/* 1. PDF VIEWER (Always Visible) */}
+        <div className={cn("h-full transition-all duration-300", isDesktopSplit ? "w-full md:w-1/2 lg:w-[60%]" : "w-full")}>
+           <PDFViewer url={material?.file_url} />
+        </div>
 
-      {showPaywall && courseContext && (
-         <CoursePaywallModal 
-            courseName={courseContext.courseName}
-            courseId={courseContext.courseId}
-            classId={courseContext.classId}
-            onClose={() => router.push('/dashboard')} 
-         />
-      )}
+        {/* 2. CHAT PANE (Desktop Side Panel) */}
+        <div className={cn(
+          "hidden md:block h-full border-l bg-white transition-all duration-300", 
+          isDesktopSplit ? "w-1/2 lg:w-[40%]" : "w-0 overflow-hidden"
+        )}>
+           <ChatWindow 
+             messages={displayMessages} 
+             isLoading={aiLoading} 
+             onSendMessage={sendMessage}
+             attachments={attachments}
+             setAttachments={setAttachments}
+           />
+        </div>
+
+        {/* 3. MOBILE CHAT DRAWER (Overlay) */}
+        {/* The Floating Button */}
+        <div className="md:hidden absolute bottom-6 right-6 z-50">
+           <button 
+             onClick={() => setIsChatOpen(true)}
+             className="w-14 h-14 bg-slate-900 rounded-full shadow-2xl flex items-center justify-center text-white hover:scale-110 transition-transform active:scale-95"
+           >
+             <UniBotMascot size={30} emotion="happy" action="idle" />
+             {/* Badge for new messages could go here */}
+           </button>
+        </div>
+
+        {/* The Drawer Panel */}
+        <div className={cn(
+          "md:hidden absolute inset-x-0 bottom-0 bg-white rounded-t-3xl shadow-2xl transition-transform duration-300 z-40 flex flex-col border-t border-slate-200",
+          isChatOpen ? "translate-y-0 h-[85vh]" : "translate-y-full h-0"
+        )}>
+           {/* Handle Bar */}
+           <div className="w-full h-1 cursor-pointer bg-transparent flex justify-center pt-3 pb-1" onClick={() => setIsChatOpen(false)}>
+              <div className="w-12 h-1.5 bg-slate-200 rounded-full" />
+           </div>
+           
+           {/* Drawer Header */}
+           <div className="px-4 py-2 border-b flex justify-between items-center">
+              <span className="font-bold text-slate-700 text-sm">UniBot Assistant</span>
+              <button onClick={() => setIsChatOpen(false)} className="p-2 hover:bg-slate-100 rounded-full"><X className="w-4 h-4"/></button>
+           </div>
+
+           {/* Chat Content */}
+           <div className="flex-1 overflow-hidden">
+             <ChatWindow 
+               messages={displayMessages} 
+               isLoading={aiLoading} 
+               onSendMessage={sendMessage}
+               attachments={attachments}
+               setAttachments={setAttachments}
+             />
+           </div>
+        </div>
+
+      </div>
     </div>
   );
 }
