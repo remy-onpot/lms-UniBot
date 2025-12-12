@@ -57,10 +57,10 @@ export default function RecordsPage() {
       const { data: userProfile } = await supabase.from('users').select('*').eq('id', user.id).single();
       setProfile(userProfile);
 
-      // Fetch Classes (Matches your Dashboard logic)
+      // Fetch Classes with CORRECT student count from class_enrollments
       const { data } = await supabase
         .from('classes')
-        .select('*, courses(id), student_course_access(count)')
+        .select('*, courses(id), students:class_enrollments(count)')
         .eq('lecturer_id', user.id)
         .order('created_at', { ascending: false });
 
@@ -77,22 +77,42 @@ export default function RecordsPage() {
     setDataLoading(true);
 
     try {
-      // A. Get Roster
+      // A. Get ALL enrolled students from class_enrollments
       const { data: roster } = await supabase
-        .from('student_course_access')
-        .select('student_id, access_type, student:users(id, full_name, student_id)')
+        .from('class_enrollments')
+        .select(`
+          student_id,
+          has_paid,
+          student:users!student_id(id, full_name, student_id)
+        `)
         .eq('class_id', cls.id);
 
-      // B. Get Course IDs
+      // B. Check who has premium course access
+      const studentIds = roster?.map(r => r.student_id) || [];
+      const { data: paidAccess } = await supabase
+        .from('student_course_access')
+        .select('student_id, access_type')
+        .eq('class_id', cls.id)
+        .in('student_id', studentIds);
+
+      const paidMap = new Map(paidAccess?.map(p => [p.student_id, p.access_type]));
+
+      // C. Merge payment status
+      const enrichedRoster = roster?.map(r => ({
+        ...r,
+        access_type: paidMap.get(r.student_id) || (r.has_paid ? 'semester_bundle' : 'trial')
+      }));
+
+      // D. Get Course IDs
       const courseIds = cls.courses?.map((c: any) => c.id) || [];
 
       if (courseIds.length === 0) {
-        setStudents(mapRosterToSummary(roster || [], [], []));
+        setStudents(mapRosterToSummary(enrichedRoster || [], [], []));
         setDataLoading(false);
         return;
       }
 
-      // C. Robust Fetch Strategy
+      // E. Robust Fetch Strategy
       const { data: assignList } = await supabase.from('assignments').select('id').in('course_id', courseIds);
       const assignIds = assignList?.map(a => a.id) || [];
 
@@ -117,7 +137,7 @@ export default function RecordsPage() {
         allQuizResults = data || [];
       }
 
-      setStudents(mapRosterToSummary(roster || [], allAssigns, allQuizResults));
+      setStudents(mapRosterToSummary(enrichedRoster || [], allAssigns, allQuizResults));
 
     } catch (e) {
       console.error(e);
@@ -197,8 +217,9 @@ export default function RecordsPage() {
       "Name": s.name, "ID": s.student_id, "Status": s.paid ? "PAID" : "UNPAID", 
       "Quiz Avg": `${s.avgQuiz}%`, "Assign Avg": `${s.avgAssign}%`
     }));
-    XLSX.utils.book_append_sheet(XLSX.utils.book_new(), XLSX.utils.json_to_sheet(data), "Summary");
-    XLSX.writeFile(XLSX.utils.book_new(), `${selectedClass.name}_Records.xlsx`);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), "Summary");
+    XLSX.writeFile(wb, `${selectedClass.name}_Records.xlsx`);
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="w-10 h-10 animate-spin text-indigo-600"/></div>;
@@ -250,7 +271,7 @@ export default function RecordsPage() {
                              {cls.status === 'archived' && <Archive className="w-3 h-3 text-amber-400" />}
                           </div>
                           <div className="flex items-center gap-2 text-xs text-slate-400">
-                             <Users className="w-3 h-3"/> {cls.student_course_access?.[0]?.count || 0} Students
+                             <Users className="w-3 h-3"/> {cls.students?.[0]?.count || 0} Students
                           </div>
                        </button>
                     ))}

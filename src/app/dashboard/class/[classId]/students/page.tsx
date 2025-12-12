@@ -40,23 +40,41 @@ export default function ClassStudentsPage() {
       if (classError) throw classError;
       setClassData(cls);
 
-      // 2. Fetch Roster
-      // We explicitly select created_at to fix the previous schema error
+      // 2. Fetch ALL enrolled students from class_enrollments
       const { data: enrollments, error: rosterError } = await supabase
-        .from('student_course_access')
+        .from('class_enrollments')
         .select(`
           id,
-          created_at, 
-          access_type,
-          student:users (
+          joined_at,
+          has_paid,
+          student_id,
+          student:users!student_id (
             id, full_name, email, student_id, phone_number, avatar_url
           )
         `)
         .eq('class_id', classId)
-        .order('created_at', { ascending: false });
+        .order('joined_at', { ascending: false });
 
       if (rosterError) throw rosterError;
-      setStudents(enrollments || []);
+
+      // 3. Check who has premium course access (paid students)
+      const studentIds = enrollments?.map(e => e.student_id) || [];
+      const { data: paidAccess } = await supabase
+        .from('student_course_access')
+        .select('student_id, access_type')
+        .eq('class_id', classId)
+        .in('student_id', studentIds);
+
+      // 4. Merge payment data
+      const paidMap = new Map(paidAccess?.map(p => [p.student_id, p.access_type]));
+      
+      const processedStudents = enrollments?.map(e => ({
+        ...e,
+        created_at: e.joined_at,
+        access_type: paidMap.get(e.student_id) || (e.has_paid ? 'semester_bundle' : 'trial')
+      })) || [];
+
+      setStudents(processedStudents);
 
     } catch (error: any) {
       console.error("Roster Load Error:", error);
