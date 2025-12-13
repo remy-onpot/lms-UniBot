@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { PRICING, PLANS } from '@/lib/constants';
 import { Button } from '@/components/ui/Button';
-import { Check, School, Hash, BookOpen } from 'lucide-react';
+import { Check, School, Hash, BookOpen, Building2, User } from 'lucide-react';
 
 interface WizardProps {
   userId: string;
@@ -12,17 +12,19 @@ interface WizardProps {
   onComplete: () => void;
 }
 
-const INTERESTS_LIST = [
-  "Technology 💻", "Business 💼", "Art & Design 🎨", "History 📜",
-  "Science 🧬", "Literature 📚", "Sports 🏀", "Music 🎵",
-  "Psychology 🧠", "Economics 📈", "Coding 👨‍💻", "Current Events 🌍"
-];
+// Helper to calculate pricing
+function calculateBundlePrice(count: number) { 
+  return Math.round(count * PRICING.SINGLE_COURSE * (1 - PRICING.BUNDLE_DISCOUNT)); 
+}
 
 export default function OnboardingWizard({ userId, role, isCourseRep, onComplete }: WizardProps) {
   const [step, setStep] = useState(1);
   const inputRef = useRef<HTMLInputElement>(null);
   const [loading, setLoading] = useState(false);
+  
+  // Data Sources
   const [universities, setUniversities] = useState<any[]>([]);
+  const [interestsList, setInterestsList] = useState<any[]>([]);
 
   // --- STATE ---
   
@@ -33,7 +35,10 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
     isOtherUni: false
   });
 
+  // Updated Lecturer State
   const [lecturerData, setLecturerData] = useState({
+    type: 'private' as 'private' | 'university', // New Toggle
+    university_id: '',
     classCount: '1',
     studentCount: '50',
     hasTAs: 'no',
@@ -51,11 +56,16 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
 
   // --- INIT ---
   useEffect(() => {
-    const fetchUnis = async () => {
-      const { data } = await supabase.from('universities').select('id, name, abbreviation').eq('is_active', true).order('name');
-      if (data) setUniversities(data);
+    const fetchData = async () => {
+      // 1. Fetch Universities
+      const { data: unis } = await supabase.from('universities').select('id, name').eq('is_active', true).order('name');
+      if (unis) setUniversities(unis);
+
+      // 2. Fetch Interests
+      const { data: ints } = await supabase.from('interest_topics').select('name, emoji').eq('is_active', true).order('name');
+      if (ints) setInterestsList(ints);
     };
-    fetchUnis();
+    fetchData();
   }, []);
 
   useEffect(() => {
@@ -70,8 +80,8 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
     );
   };
 
+  // Student Flow Handlers
   const handleStudentNext = () => {
-    // Validation for Step 1
     if (step === 1) {
       if (!studentProfile.university_id && !studentProfile.custom_university) {
         return alert("Please select your University.");
@@ -89,7 +99,8 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
     
     const updates: any = {
       interests: studentInterests,
-      student_id: studentProfile.student_id,
+      student_id_code: studentProfile.student_id, // Mapped correctly to DB column
+      onboarding_completed: true
     };
 
     if (studentProfile.isOtherUni) {
@@ -103,8 +114,19 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
     await saveProfile(updates);
   };
 
+  // Lecturer Flow Handlers
   const handleLecturerNext = () => {
-    if (step === 3) {
+    // Branching Logic for University Lecturers
+    if (step === 1 && lecturerData.type === 'university') {
+       if (!lecturerData.university_id) return alert("Please select your institution.");
+       // Skip to final step or auto-complete because they are free
+       // We can just finalize here or show a "Confirmation" step
+       handleFinalizeUniversityLecturer();
+       return;
+    }
+
+    // Private Lecturer Logic (Pricing Calculation)
+    if (step === 3 && lecturerData.type === 'private') {
       let recommended = 'starter';
       const count = parseInt(lecturerData.studentCount);
       if (count > 500 || lecturerData.hasTAs === 'yes') recommended = 'elite';
@@ -114,32 +136,61 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
     setStep(step + 1);
   };
 
-  const handleFinalizeLecturer = async () => {
+  const handleFinalizeUniversityLecturer = async () => {
+    setLoading(true);
+    // University Lecturers get "Cohort Manager" status (or Elite) for FREE
+    // We also save their university_id to track enterprise usage
+    const updates = {
+        plan_tier: 'cohort_manager', // Special tier
+        role: 'lecturer',
+        university_id: lecturerData.university_id,
+        onboarding_completed: true,
+        subscription_status: 'active' // Auto-active without payment
+    };
+    
+    const { error } = await supabase.from('users').update(updates).eq('id', userId);
+    if (error) alert(error.message);
+    else onComplete();
+    setLoading(false);
+  };
+
+  const handleFinalizePrivateLecturer = async () => {
     setLoading(true);
     if (lecturerData.selectedTier !== 'starter' && coupon !== 'TEST-DRIVE') {
-      alert("Use coupon: TEST-DRIVE");
+      alert("Use coupon: TEST-DRIVE for beta access.");
       setLoading(false);
       return;
     }
     await saveProfile({ plan_tier: lecturerData.selectedTier });
   };
 
+  // Course Rep Handlers
   const handleFinalizeRep = async () => {
     if (!repData.cohortName) return alert("Enter cohort name.");
     setLoading(true);
     
-    // Save profile first
-    const { error } = await supabase
-      .from('users')
-      .update({ onboarding_completed: true, plan_tier: 'cohort_manager' })
-      .eq('id', userId);
+    // 1. Create Class
+    const prefix = repData.cohortName.substring(0, 3).toUpperCase();
+    const randomNum = Math.floor(1000 + Math.random() * 9000);
+    const accessCode = `${prefix}-${randomNum}`;
+
+    const { data: cls, error } = await supabase.from('classes').insert([{
+       name: repData.cohortName,
+       description: `Cohort for ${repData.approxStudents} students.`,
+       access_code: accessCode,
+       lecturer_id: userId,
+       type: 'cohort',
+       course_count: parseInt(repData.courseCount)
+    }]).select().single();
 
     if (error) {
-        alert(error.message);
+        alert("Error: " + error.message);
         setLoading(false);
-    } else {
-        await createCohortClass();
-    }
+        return;
+    } 
+    
+    // 2. Update User Profile
+    await saveProfile({ plan_tier: 'cohort_manager' });
   };
 
   const saveProfile = async (updates: any) => {
@@ -152,29 +203,6 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
     else onComplete();
     
     setLoading(false);
-  };
-
-  const createCohortClass = async () => {
-     const prefix = repData.cohortName.substring(0, 3).toUpperCase();
-     const randomNum = Math.floor(1000 + Math.random() * 9000);
-     const accessCode = `${prefix}-${randomNum}`;
-
-     const { data: cls, error } = await supabase.from('classes').insert([{
-        name: repData.cohortName,
-        description: `Cohort for ${repData.approxStudents} students.`,
-        access_code: accessCode,
-        lecturer_id: userId,
-        course_count: parseInt(repData.courseCount)
-     }]).select().single();
-
-     if (error) {
-         alert("Error: " + error.message);
-     } else {
-         await supabase.from('class_instructors').insert([{ lecturer_id: userId, class_id: cls.id }]);
-         alert(`Cohort Created! Code: ${accessCode}`);
-         onComplete();
-     }
-     setLoading(false);
   };
 
   // --- RENDER ---
@@ -198,7 +226,12 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
         {/* Header */}
         <div className="bg-indigo-600 p-6 text-white text-center shrink-0">
           <h2 className="text-2xl font-bold">{getTitle()}</h2>
-          <p className="text-indigo-100 text-sm opacity-90">Step {step} of {role === 'lecturer' ? 4 : isCourseRep ? 3 : 2}</p>
+          <p className="text-indigo-100 text-sm opacity-90">
+             {role === 'lecturer' && lecturerData.type === 'university' 
+               ? 'Institutional Access' 
+               : `Step ${step}`
+             }
+          </p>
         </div>
 
         <div className="p-8 overflow-y-auto">
@@ -273,7 +306,7 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
                 </div>
               )}
 
-              {/* Step 2: Interests */}
+              {/* Step 2: Interests (Dynamic) */}
               {step === 2 && (
                 <div className="animate-in slide-in-from-right-4">
                   <div className="text-center mb-4">
@@ -282,19 +315,21 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 max-h-60 overflow-y-auto p-1 custom-scrollbar">
-                    {INTERESTS_LIST.map((interest) => (
+                    {interestsList.length > 0 ? interestsList.map((interest) => (
                       <button
-                        key={interest}
-                        onClick={() => toggleInterest(interest)}
+                        key={interest.name}
+                        onClick={() => toggleInterest(interest.name)}
                         className={`p-3 rounded-xl text-sm font-bold transition-all border-2 text-left ${
-                          studentInterests.includes(interest)
+                          studentInterests.includes(interest.name)
                             ? 'border-indigo-500 bg-indigo-50 text-indigo-700 shadow-sm'
                             : 'border-slate-100 bg-white text-slate-600 hover:border-slate-200'
                         }`}
                       >
-                        {interest}
+                        {interest.emoji} {interest.name}
                       </button>
-                    ))}
+                    )) : (
+                        <p className="text-sm text-slate-400 col-span-2 text-center">Loading interests...</p>
+                    )}
                   </div>
 
                   <div className="pt-4 mt-2 border-t border-slate-100">
@@ -313,7 +348,7 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
             </div>
           )}
 
-          {/* === COURSE REP FLOW (Simplified for logic consistency) === */}
+          {/* === COURSE REP FLOW === */}
           {role === 'student' && isCourseRep && (
             <div className="space-y-6 animate-in slide-in-from-right-4">
               {step === 1 && (
@@ -366,7 +401,7 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
                  <div className="space-y-6">
                     <div className="bg-slate-50 p-6 rounded-2xl border border-slate-100 text-center">
                        <p className="text-sm text-slate-500 font-medium uppercase mb-2">Student Bundle Price</p>
-                       <p className="text-4xl font-black text-green-600">₵{Math.round(parseInt(repData.courseCount) * PRICING.SINGLE_COURSE * (1 - PRICING.BUNDLE_DISCOUNT))}</p>
+                       <p className="text-4xl font-black text-green-600">₵{calculateBundlePrice(parseInt(repData.courseCount))}</p>
                        <p className="text-xs text-slate-400 mt-2">Per student / semester</p>
                     </div>
                     <div className="text-center">
@@ -380,10 +415,84 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
             </div>
           )}
 
-          {/* === LECTURER FLOW (Unchanged) === */}
+          {/* === LECTURER FLOW (New Branching) === */}
           {role === 'lecturer' && (
             <div className="space-y-6 animate-in slide-in-from-right-4">
+              
+              {/* Step 1: Type Selection */}
               {step === 1 && (
+                 <div className="space-y-6">
+                    <div className="text-center mb-4">
+                       <h3 className="font-bold text-xl">Faculty Verification</h3>
+                       <p className="text-sm text-slate-500">Are you teaching privately or at a university?</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4">
+                       <button 
+                         onClick={() => setLecturerData({...lecturerData, type: 'university'})}
+                         className={`p-4 rounded-xl border-2 text-left flex items-center gap-4 transition-all ${
+                            lecturerData.type === 'university' 
+                            ? 'border-indigo-600 bg-indigo-50' 
+                            : 'border-slate-100 hover:border-slate-200'
+                         }`}
+                       >
+                          <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
+                             <Building2 className="w-6 h-6" />
+                          </div>
+                          <div>
+                             <h4 className="font-bold text-slate-900">University Lecturer</h4>
+                             <p className="text-xs text-slate-500">I teach at a verified institution.</p>
+                          </div>
+                          {lecturerData.type === 'university' && <Check className="w-5 h-5 text-indigo-600 ml-auto" />}
+                       </button>
+
+                       <button 
+                         onClick={() => setLecturerData({...lecturerData, type: 'private'})}
+                         className={`p-4 rounded-xl border-2 text-left flex items-center gap-4 transition-all ${
+                            lecturerData.type === 'private' 
+                            ? 'border-indigo-600 bg-indigo-50' 
+                            : 'border-slate-100 hover:border-slate-200'
+                         }`}
+                       >
+                          <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center text-purple-600">
+                             <User className="w-6 h-6" />
+                          </div>
+                          <div>
+                             <h4 className="font-bold text-slate-900">Private Tutor / SaaS</h4>
+                             <p className="text-xs text-slate-500">I run my own private classes.</p>
+                          </div>
+                          {lecturerData.type === 'private' && <Check className="w-5 h-5 text-indigo-600 ml-auto" />}
+                       </button>
+                    </div>
+
+                    {/* If University Selected -> Show Dropdown */}
+                    {lecturerData.type === 'university' && (
+                       <div className="animate-in fade-in slide-in-from-top-2 pt-4 border-t border-slate-100 mt-4">
+                          <label className="block text-sm font-bold text-slate-700 mb-1.5">Select Your Institution</label>
+                          <select 
+                            className="w-full p-3 border rounded-xl bg-slate-50"
+                            value={lecturerData.university_id}
+                            onChange={(e) => setLecturerData({...lecturerData, university_id: e.target.value})}
+                          >
+                             <option value="">-- Select University --</option>
+                             {universities.map(u => (
+                                <option key={u.id} value={u.id}>{u.name}</option>
+                             ))}
+                          </select>
+                          <p className="text-[11px] text-blue-600 mt-2 bg-blue-50 p-2 rounded">
+                             Note: University lecturers get free access to the Cohort Manager plan.
+                          </p>
+                       </div>
+                    )}
+
+                    <Button onClick={handleLecturerNext} className="w-full mt-2" size="lg">
+                       {lecturerData.type === 'university' ? 'Complete Setup' : 'Next Step'}
+                    </Button>
+                 </div>
+              )}
+
+              {/* Step 2-4: Private Lecturer Flow (Unchanged) */}
+              {step === 2 && lecturerData.type === 'private' && (
                  <div className="space-y-4">
                     <h3 className="font-bold text-lg">Teaching Load</h3>
                     <div className="grid grid-cols-3 gap-3">
@@ -394,7 +503,7 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
                     <Button onClick={handleLecturerNext} className="w-full mt-4">Next</Button>
                  </div>
               )}
-              {step === 2 && (
+              {step === 3 && lecturerData.type === 'private' && (
                  <div className="space-y-4">
                     <h3 className="font-bold text-lg">Total Students</h3>
                     <select className="w-full p-3 border rounded-xl bg-white" value={lecturerData.studentCount} onChange={e=>setLecturerData({...lecturerData, studentCount: e.target.value})}>
@@ -406,7 +515,7 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
                     <Button onClick={handleLecturerNext} className="w-full mt-4">Next</Button>
                  </div>
               )}
-              {step === 3 && (
+              {step === 4 && lecturerData.type === 'private' && (
                  <div className="space-y-4">
                     <h3 className="font-bold text-lg">Do you have TAs?</h3>
                     <div className="flex gap-4">
@@ -416,11 +525,11 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
                     <Button onClick={handleLecturerNext} className="w-full mt-4">See Recommendation</Button>
                  </div>
               )}
-              {step === 4 && (
+              {step === 5 && lecturerData.type === 'private' && (
                  <div className="space-y-6 text-center">
                     <div>
                       <p className="text-xs font-bold text-slate-400 uppercase">Recommended Plan</p>
-                      <h3 className="text-3xl font-black text-indigo-600 mt-2">{tiers[lecturerData.selectedTier as keyof typeof tiers].name}</h3>
+                      <h3 className="text-3xl font-black text-indigo-600 mt-2">{tiers[lecturerData.selectedTier as keyof typeof tiers]?.name}</h3>
                     </div>
                     
                     {lecturerData.selectedTier !== 'starter' && (
@@ -432,7 +541,7 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
                       />
                     )}
                     
-                    <Button onClick={handleFinalizeLecturer} disabled={loading} size="lg" className="w-full bg-green-600 hover:bg-green-700 shadow-lg shadow-green-200">
+                    <Button onClick={handleFinalizePrivateLecturer} disabled={loading} size="lg" className="w-full bg-green-600 hover:bg-green-700 shadow-lg shadow-green-200">
                       Activate Plan
                     </Button>
                  </div>
@@ -443,8 +552,4 @@ export default function OnboardingWizard({ userId, role, isCourseRep, onComplete
       </div>
     </div>
   );
-  
-  function calculateBundlePrice(count: number) { 
-    return Math.round(count * PRICING.SINGLE_COURSE * (1 - PRICING.BUNDLE_DISCOUNT)); 
-  }
 }

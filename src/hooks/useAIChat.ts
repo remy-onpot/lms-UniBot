@@ -6,7 +6,6 @@ import { db } from '@/lib/db';
 import { supabase } from '@/lib/supabase';
 
 export function useAIChat(
-  documentContext?: string | null, 
   userId?: string, 
   materialId?: string
 ) {
@@ -22,22 +21,26 @@ export function useAIChat(
   // 1. Load History on Mount (Persistence)
   // ------------------------------------------------------------------
   useEffect(() => {
-    if (!userId || !materialId) return;
+    if (!userId) return;
 
     const loadHistory = async () => {
       try {
-        // Check if a session already exists for this material
-        const { data: session } = await supabase
-          .from('chat_sessions')
-          .select('id')
-          .eq('user_id', userId)
-          .eq('material_id', materialId)
-          .maybeSingle();
+        let session = null;
+
+        // If specific material, find that session
+        if (materialId) {
+            const { data } = await supabase
+                .from('chat_sessions')
+                .select('id')
+                .eq('user_id', userId)
+                .eq('material_id', materialId)
+                .maybeSingle();
+            session = data;
+        }
 
         if (session) {
           setCurrentSessionId(session.id);
           
-          // Fetch messages for this session
           const { data: history } = await supabase
             .from('chat_messages')
             .select('*')
@@ -54,7 +57,6 @@ export function useAIChat(
     loadHistory();
   }, [userId, materialId]);
 
-  // Helper: Convert File to Base64 for API
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -73,12 +75,12 @@ export function useAIChat(
     // A. Process Images (if any)
     const processedImages = await Promise.all(files.map(async (file) => ({
       inlineData: {
-        data: (await fileToBase64(file)).split(',')[1], // Remove prefix
+        data: (await fileToBase64(file)).split(',')[1],
         mimeType: file.type
       }
     })));
 
-    // B. Optimistic UI Update (Show message immediately)
+    // B. Optimistic UI Update
     const tempUserMsg: ChatMessage & { images?: string[] } = {
       id: Date.now().toString(),
       session_id: currentSessionId || 'temp',
@@ -98,20 +100,16 @@ export function useAIChat(
       // C. Ensure Session Exists
       let activeSessionId = currentSessionId;
       
-      // If no session exists, we need one.
       if (!activeSessionId && userId) {
         const title = materialId 
           ? `Chat about Document` 
-          : (userInput.slice(0, 30) || "Image Analysis");
+          : (userInput.slice(0, 30) || "New Chat");
           
         if (isOnline) {
-            // Online: Create real session
             const newSession = await ChatService.createSession(userId, title, materialId);
             activeSessionId = newSession.id;
             setCurrentSessionId(activeSessionId);
         } else {
-            // Offline: Use a temporary ID. We will reconcile this during Sync if possible,
-            // or just allow the user to read/write locally until online.
             activeSessionId = `offline-${Date.now()}`;
             setCurrentSessionId(activeSessionId);
         }
@@ -119,11 +117,11 @@ export function useAIChat(
 
       // 🛑 D. OFFLINE MODE CHECK
       if (!isOnline && activeSessionId && userId) {
-         // Queue the User Message to Dexie
          await db.offlineActions.add({
             type: 'chat_message',
             payload: { 
-                sessionId: activeSessionId, 
+                sessionId: activeSessionId,
+                userId, // Needed for syncing 
                 role: 'user', 
                 content: userInput 
             },
@@ -131,37 +129,34 @@ export function useAIChat(
             created_at: new Date().toISOString()
          });
 
-         // Add System Message to UI to inform user
          setMessages(prev => [...prev, {
             id: 'system-offline-' + Date.now(),
             role: 'system',
-            content: 'You are offline. Message queued and will send automatically when connection returns.',
+            content: 'You are offline. Message queued.',
             session_id: activeSessionId || '',
             created_at: new Date().toISOString()
          }]);
          
          setIsLoading(false);
-         return; // Stop here
+         return; 
       }
 
       // 🟢 E. ONLINE MODE
       
       // 1. Save User Message to Database
       if (activeSessionId && userId) {
-        // Note: Real apps upload images to storage here. For MVP we skip image persistence in DB.
         await ChatService.saveMessage(activeSessionId, 'user', userInput);
       }
 
-      // 2. Call AI API (The Smart Router)
+      // 2. Call AI API (Secure: Sends ID only, not text)
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: messages.map(m => ({ role: m.role, content: m.content })), // Send history
+          messages: messages.map(m => ({ role: m.role, content: m.content })),
           currentMessage: userInput,
           images: processedImages,
-          documentContext,
-          materialId,
+          materialId, // 🔑 The Server uses this to find the text context
         }),
       });
 
@@ -189,7 +184,6 @@ export function useAIChat(
         const chunk = decoder.decode(value, { stream: true });
         accumulatedText += chunk;
 
-        // Update UI with chunks
         setMessages(prev => {
           const newMsgs = [...prev];
           const index = newMsgs.findIndex(m => m.id === aiMsgId);
@@ -215,7 +209,7 @@ export function useAIChat(
     } finally {
       setIsLoading(false);
     }
-  }, [messages, isLoading, documentContext, userId, currentSessionId, materialId, isOnline]);
+  }, [messages, isLoading, userId, currentSessionId, materialId, isOnline]);
 
   return {
     messages,

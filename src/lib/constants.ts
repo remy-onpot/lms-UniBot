@@ -1,5 +1,9 @@
 // src/lib/constants.ts
 
+// 🟢 TYPES (Exported first to avoid resolution issues)
+export type PlanType = 'starter' | 'pro' | 'elite';
+export type UserRole = 'student' | 'lecturer' | 'university_admin' | 'super_admin';
+
 export const PDF_EXTRACTION = {
   MAX_CHARS_QUIZ: 15_000,
   MAX_CHARS_GRADING: 25_000,
@@ -21,7 +25,7 @@ export const RATE_LIMITS = {
   GRADING: 20,
 } as const;
 
-// 🟢 PUBLIC PRICING (Used by UI components like PricingTable)
+// 🟢 PUBLIC PRICING
 export const PLANS = {
   starter: {
     name: 'Starter',
@@ -43,14 +47,7 @@ export const PLANS = {
   },
 } as const;
 
-export const PRICING = {
-  SINGLE_COURSE: 15,
-  SEMESTER_BUNDLE: 50,
-  BUNDLE_DISCOUNT: 0.3,
-  QUIZ_RESULTS_UNLOCK: 15,
-} as const;
-
-// 🟢 EXPORTED RULES (Used by Permissions & Services)
+// 🟢 EXPORTED RULES
 export const SAAS_PLANS = {
   starter: { 
     label: 'Starter', 
@@ -74,7 +71,7 @@ export const COHORT_RULES = {
   FREE_TRIAL_WEEKS: 2, 
   PRICING: {
     SINGLE_COURSE: 15.00, 
-    BUNDLE_DISCOUNT_PERCENT: 0.25, // 25% off for Semester Bundle
+    BUNDLE_DISCOUNT_PERCENT: 0.25, 
   },
   SEMESTER_DURATION_MONTHS: 6,
   limits: { 
@@ -85,19 +82,21 @@ export const COHORT_RULES = {
   }
 } as const;
 
-// 🟢 AGGREGATE OBJECT (For backward compatibility if needed)
+export const PRICING = {
+  SINGLE_COURSE: 15,
+  SEMESTER_BUNDLE: 50,
+  BUNDLE_DISCOUNT: 0.3,
+  QUIZ_RESULTS_UNLOCK: 15,
+} as const;
+
+// 🟢 AGGREGATE OBJECT
 export const BUSINESS_LOGIC = {
   PLANS: SAAS_PLANS,
   COHORT: COHORT_RULES
 };
 
-// 🟢 TYPES
-export type PlanTier = keyof typeof PLANS;
-// ✅ FIX: Added 'university_admin' to solve the permissions comparison error
-export type UserRole = 'student' | 'lecturer' | 'university_admin' | 'super_admin';
-
 /**
- * 🛠️ HELPER: Get limits for any user seamlessly
+ * 🛠️ HELPER: Get limits for any user
  */
 export function getPlanLimits(role: string, planTier: string = 'starter', isCourseRep: boolean = false) {
   if (isCourseRep) {
@@ -105,7 +104,6 @@ export function getPlanLimits(role: string, planTier: string = 'starter', isCour
   }
   
   if (role === 'lecturer') {
-    // Default to starter if planTier is invalid
     const tier = (planTier in SAAS_PLANS) ? planTier as keyof typeof SAAS_PLANS : 'starter';
     return { type: 'saas', ...SAAS_PLANS[tier].limits };
   }

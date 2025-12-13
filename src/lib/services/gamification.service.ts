@@ -1,183 +1,198 @@
-import { supabase } from '../supabase';
-import { ShopItem, Achievement } from '../../types';
+import { supabase } from '@/lib/supabase'; // ✅ Using your existing singleton
 import { subDays, format, startOfDay } from 'date-fns';
+import { ShopItem, ActivityType } from '@/types';
 
-// 1. Constants: Centralized XP Rates
-const XP_RATES = {
-  daily_quiz: { base: 10, per_question: 10, limit: 3 },
-  course_quiz: { base: 50, per_question: 0, limit: Infinity },
-  assignment: { base: 100, per_question: 0, limit: Infinity },
-  reading: { base: 5, per_question: 0, limit: 10 }
-};
+// --- TYPES ---
+export interface QuizResult {
+  score: number;
+  totalQuestions: number;
+  startedAt: Date;
+  completedAt: Date;
+  topics?: string[];
+  round?: number;
+}
 
-export type ActivityType = keyof typeof XP_RATES;
+export interface Achievement {
+  id: string;
+  name: string;
+  description: string;
+  xp_reward: number;
+  icon: string;
+  criteria: any;
+  created_at?: string;
+}
 
-// 2. Interface: Achievement with earned status
 export interface AchievementWithStatus extends Achievement {
   earned_at?: string;
 }
 
+// ✅ Fix for "Parameter 'log' implicitly has an 'any' type"
+interface ActivityLog {
+  created_at: string;
+  activity_type: ActivityType;
+  xp_earned: number;
+}
+
+export interface DailyQuizResponse {
+  questions: any[];
+  round: number;
+  topic: string;
+  error?: string;
+}
+
 export const GamificationService = {
   
-  /**
-   * 🏆 PRODUCTION METHOD: Records activity, relying on DB Trigger to update user stats.
-   */
-  async recordActivity(userId: string, type: ActivityType, score: number = 0, total: number = 0) {
-    const xpEarned = XP_RATES[type].base + (XP_RATES[type].per_question * score);
-    
-    // 1. Insert into Activity Log (The Source of Truth). 
-    // The DB trigger `tr_update_stats` handles the user's total XP/Gems update.
+  // --- 1. CORE ACTIVITY LOGGING ---
+
+  async recordActivity(userId: string, type: ActivityType, metadata: any = {}) {
+    const score = typeof metadata === 'number' ? metadata : (metadata.score || 0);
+    const metaObj = typeof metadata === 'object' ? metadata : { score };
+
     const { error } = await supabase.from('activity_logs').insert({
       user_id: userId,
       activity_type: type,
-      xp_earned: xpEarned,
       score: score,
-      metadata: { total: total }
+      metadata: metaObj 
     });
 
     if (error) {
-        throw new Error(`Failed to record activity: ${error.message}`);
+      console.error('Gamification Log Error:', error);
+      return { success: false }; 
     }
-
-    // 2. Non-blocking: Check for achievements immediately after activity
-    await this.checkAndAwardAchievements(userId, { 
-      type: type === 'daily_quiz' ? 'quiz_finish' : 'assignment_submit', 
-      score, 
-      total 
-    });
-
-    // NOTE: In a real app, the backend RPC for streak handling would return newStreak/gemsAdded
-    return { xpEarned, newStreak: 0, gemsAdded: 0 }; 
+    return { success: true };
   },
 
-  /**
-   * 🏆 REFACTORED: Awards achievement using relational tables and safe XP updates.
-   */
-  async checkAndAwardAchievements(userId: string, context: { 
-    type: 'quiz_finish' | 'assignment_submit' | 'shop_buy' | 'streak_update';
-    score?: number; 
-    total?: number;
-  }) {
-    const newUnlocks: string[] = [];
-    
-    // Fetch Stats (from clean tables)
-    const { data: profile } = await supabase.from('users').select('xp, current_streak').eq('id', userId).single();
-    const { count: quizCount } = await supabase.from('activity_logs').select('id', { count: 'exact', head: true }).eq('user_id', userId).eq('activity_type', 'daily_quiz');
-    const { count: assignCount } = await supabase.from('activity_logs').select('id', { count: 'exact', head: true }).eq('user_id', userId).eq('activity_type', 'assignment');
+  // --- 2. DAILY QUIZ MANAGEMENT ---
 
-    // Fetch Badges & Ownership (using the relational `user_achievements` table)
-    const { data: allAchievements } = await supabase.from('achievements').select('id, name, xp_reward, criteria');
-    const { data: userBadges } = await supabase.from('user_achievements').select('achievement_id').eq('user_id', userId);
-    
-    const ownedIds = new Set(userBadges?.map(b => b.achievement_id));
-    const now = new Date();
-    const currentHour = now.getHours();
-    const isWeekend = now.getDay() === 0 || now.getDay() === 6;
+  async getDailyQuestions(): Promise<DailyQuizResponse> {
+    try {
+      const response = await fetch('/api/daily-quiz/start', {
+        method: 'POST',
+      });
 
-    for (const ach of allAchievements || []) {
-      if (ownedIds.has(ach.id)) continue; 
-
-      let earned = false;
-      const c = ach.criteria;
-
-      // Rules Engine
-      if (c.min_streak && (profile?.current_streak || 0) >= c.min_streak) earned = true;
-      if (c.quiz_count && (quizCount || 0) >= c.quiz_count) earned = true;
-      if (context.type === 'quiz_finish' && c.perfect_score && context.score === context.total) earned = true;
-      if (c.assign_count && (assignCount || 0) >= c.assign_count) earned = true;
-      if (c.hour_end && currentHour < c.hour_end) earned = true;
-      if (c.hour_start && currentHour >= c.hour_start) earned = true;
-      if (c.is_weekend && isWeekend) earned = true;
-      if (context.type === 'shop_buy' && c.shop_purchase) earned = true;
-
-      // Award Badge
-      if (earned) {
-        // Insert into the relational ownership table
-        await supabase.from('user_achievements').insert({ user_id: userId, achievement_id: ach.id });
-        
-        // Reward XP by inserting into the activity log (trigger handles user update)
-        const { error: logError } = await supabase.from('activity_logs').insert({
-             user_id: userId,
-             activity_type: 'achievement',
-             xp_earned: ach.xp_reward,
-             metadata: { achievement_name: ach.name }
-         });
-
-        if (logError) console.error("Failed to log achievement XP:", logError);
-        
-        newUnlocks.push(ach.name);
+      if (response.status === 429) {
+        return { questions: [], round: 0, topic: '', error: 'LIMIT_REACHED' };
       }
+
+      if (!response.ok) throw new Error('Failed to start quiz');
+      
+      const data = await response.json();
+      return {
+        questions: data.questions,
+        round: data.round,       
+        topic: data.topic       
+      };
+
+    } catch (error) {
+      console.error('Quiz Start Error:', error);
+      return {
+        questions: [],
+        round: 1,
+        topic: "Offline Mode",
+        error: 'NETWORK_ERROR'
+      };
     }
-    return newUnlocks;
   },
 
-  /**
-   * FINAL: Correctly joins achievements table and user_achievements table.
+  async submitQuizResult(userId: string, result: QuizResult) {
+    const durationSeconds = Math.round(
+      (result.completedAt.getTime() - result.startedAt.getTime()) / 1000
+    );
+
+    const { error: historyError } = await supabase
+      .from('quiz_history')
+      .insert({
+        user_id: userId,
+        quiz_type: 'daily_quiz',
+        score: result.score,
+        total_questions: result.totalQuestions,
+        started_at: result.startedAt.toISOString(),
+        completed_at: result.completedAt.toISOString(),
+        duration_seconds: durationSeconds,
+        topics_covered: result.topics || [],
+        metadata: { round: result.round } 
+      });
+
+    if (historyError) {
+      console.error('Failed to save history:', historyError);
+      throw historyError;
+    }
+
+    const roundBonus = (result.round || 1) * 20; 
+    
+    return this.recordActivity(userId, 'daily_quiz', {
+      score: result.score,
+      total: result.totalQuestions,
+      duration: durationSeconds,
+      bonus_xp: roundBonus
+    });
+  },
+/**
+   * 📚 RECORD READING SESSION
+   * Call this when the student closes a PDF or leaves a topic page.
+   * Only records if they spent > 5 minutes (300 seconds).
    */
+  async recordReadingSession(userId: string, topicId: string, durationSeconds: number) {
+    if (durationSeconds < 300) {
+      console.log("Reading too short for streak (Min 5m)");
+      return; 
+    }
+
+  
+    return this.recordActivity(userId, 'reading', {
+      duration: durationSeconds,
+      topic_id: topicId,
+      bonus_xp: 0
+    });
+  },
+
+  // --- 3. STATS & ACHIEVEMENTS ---
+
   async getAllAchievements(userId: string): Promise<AchievementWithStatus[]> {
     const { data: all } = await supabase.from('achievements').select('*').order('xp_reward', { ascending: true });
-    
     const { data: owned } = await supabase.from('user_achievements').select('achievement_id, earned_at').eq('user_id', userId);
-    const ownedMap = new Map(owned?.map(o => [o.achievement_id, o.earned_at]));
 
-    return (all || []).map(ach => ({ 
-        ...ach, 
+    const ownedMap = new Map(owned?.map((o: any) => [o.achievement_id, o.earned_at]));
+
+    return (all || []).map((ach: any) => ({ 
+        ...ach,
         earned_at: ownedMap.get(ach.id) 
     }));
   },
 
-  // --- 3. ANALYTICS (Relies on clean `activity_logs`) ---
-  
   async getUserStats(userId: string) {
     const today = new Date();
-    const sevenDaysAgo = subDays(today, 6); // Last 7 days
+    const sevenDaysAgo = subDays(today, 6);
 
-    // 1. Fetch Logs with Metadata (xp_earned is now directly on the log)
-    const { data: logs } = await supabase
+    const { data: recentLogs } = await supabase
       .from('activity_logs')
-      .select('created_at, activity_type, metadata, xp_earned')
+      .select('created_at, activity_type, xp_earned')
       .eq('user_id', userId)
       .gte('created_at', startOfDay(sevenDaysAgo).toISOString());
 
-    if (!logs) return { weeklyActivity: [], totalHours: 0, totalDays: 0 };
-
-    // 2. Calculate Totals (Lifetime)
-    const { count: totalLogs } = await supabase.from('activity_logs').select('id', { count: 'exact', head: true }).eq('user_id', userId);
+    const { count: totalLogs } = await supabase.from('activity_logs').select('*', { count: 'exact', head: true }).eq('user_id', userId);
     
-    // Estimate Total Hours (Average 15 mins per activity across lifetime)
-    const totalHours = Math.round(((totalLogs || 0) * 15) / 60); 
-
-    // Calculate Unique Active Days
-    const totalDays = new Set(logs.map(l => new Date(l.created_at).toDateString())).size; 
-
-    // 3. Process Weekly Data for Chart
+    // Process Graph Data
+    const logs = (recentLogs as ActivityLog[]) || []; // ✅ Fixed Type
     const statsMap = new Map<string, { xp: number; hours: number }>();
     
-    // Initialize last 7 days with 0
     for (let i = 6; i >= 0; i--) {
-      const dayLabel = format(subDays(today, i), 'EEE'); // "Mon", "Tue"
-      statsMap.set(dayLabel, { xp: 0, hours: 0 });
+      statsMap.set(format(subDays(today, i), 'EEE'), { xp: 0, hours: 0 });
     }
 
-    logs.forEach(log => {
+    // ✅ Fixed 'log' implicit any error
+    logs.forEach((log: ActivityLog) => {
       const dayLabel = format(new Date(log.created_at), 'EEE');
       const current = statsMap.get(dayLabel) || { xp: 0, hours: 0 };
-
-      // Use actual xp_earned from the log, defaulting to 10
-      const xp = log.xp_earned || 10; 
-      let duration = log.metadata?.duration || 0; // minutes
-
-      if (duration === 0) {
-          // Fallback Estimations
-          if (log.activity_type === 'daily_quiz') duration = 5;
-          else if (log.activity_type === 'course_quiz') duration = 15;
-          else if (log.activity_type === 'assignment') duration = 60;
-          else duration = 10;
-      }
+      
+      let durationMinutes = 10;
+      if (log.activity_type === 'daily_quiz') durationMinutes = 5;
+      else if (log.activity_type === 'assignment') durationMinutes = 45;
+      else if (log.activity_type === 'course_quiz') durationMinutes = 15;
 
       statsMap.set(dayLabel, { 
-          xp: current.xp + xp, 
-          hours: current.hours + (duration / 60) 
+          xp: current.xp + (log.xp_earned || 0), 
+          hours: current.hours + (durationMinutes / 60) 
       });
     });
 
@@ -187,59 +202,42 @@ export const GamificationService = {
       hours: parseFloat(data.hours.toFixed(1))
     }));
 
-    return { weeklyActivity, totalHours, totalDays };
+    // ✅ Fixed 'l' implicit any error
+    const activeDays = new Set(logs.map((l: ActivityLog) => new Date(l.created_at).toDateString())).size;
+    const totalHours = Math.round(((totalLogs || 0) * 15) / 60);
+
+    return { weeklyActivity, totalHours, totalDays: activeDays };
   },
 
-  // --- 4. HELPERS ---
-  async checkDailyLogin(userId: string) {
-    const { data: user } = await supabase.from('users').select('current_streak').eq('id', userId).single();
-    if (!user) return null;
-    return { newStreak: user.current_streak, xpGained: 0 };
-  },
+  // --- 4. SHOP FUNCTIONALITY ---
 
-  async checkDailyLimit(userId: string, type: ActivityType = 'daily_quiz'): Promise<boolean> {
-    const today = new Date().toISOString().split('T')[0];
-    const { count } = await supabase
-      .from('activity_logs')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .eq('activity_type', type)
-      .gte('created_at', `${today}T00:00:00.000Z`);
-
-    const limit = XP_RATES[type]?.limit ?? Infinity;
-    return (count || 0) < limit;
-  },
-
-  // --- 5. SHOP ---
   async getShopItems() {
-    const { data, error } = await supabase.from('shop_items').select('*').eq('is_active', true).order('cost');
+    const { data, error } = await supabase.from('shop_items').select('*').eq('is_active', true).order('cost', { ascending: true });
     if (error) throw error;
     return data as ShopItem[];
   },
 
   async buyItem(userId: string, itemId: string) {
-    // This calls your safe API route which executes the `purchase_shop_item` RPC
-    const response = await fetch('/api/shop/buy', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ itemId }),
+    const { data, error } = await supabase.rpc('purchase_item', { 
+      p_user_id: userId, 
+      p_item_id: itemId 
     });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Purchase failed');
-    
-    // Check for achievements after purchase (e.g., "First Purchase")
-    await this.checkAndAwardAchievements(userId, { type: 'shop_buy' });
-    
-    return { success: true, newGems: data.new_balance, newOwned: data.new_frames };
+
+    if (error) throw new Error(error.message);
+    return { success: true, newBalance: data?.new_balance };
   },
 
-  async equipFrame(userId: string, frameId: string) {
-    const { error } = await supabase.from('users').update({ profile_frame: frameId }).eq('id', userId);
+  async equipFrame(userId: string, itemId: string) {
+    const { error } = await supabase.rpc('equip_item', { 
+      p_user_id: userId, 
+      p_item_id: itemId 
+    });
     if (error) throw error;
   },
 
   async getAvailableInterests() {
-    const { data } = await supabase.from('interest_topics').select('name, emoji').eq('is_active', true).order('name');
-    return data || [];
+     const { data, error } = await supabase.from('interest_topics').select('name, emoji').eq('is_active', true).order('name');
+     if (error) return [];
+     return data;
   }
 };

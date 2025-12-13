@@ -1,10 +1,10 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState } from 'react';
-import { useNetworkState } from 'react-use'; // pnpm add react-use
+import { useNetworkState } from 'react-use'; 
 import { toast } from 'sonner';
 import { db, OfflineAction } from '@/lib/db';
-import { supabase } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase'; // Client-side client
 import { Loader2, Wifi, WifiOff } from 'lucide-react';
 
 interface SyncContextType {
@@ -23,6 +23,25 @@ const SyncContext = createContext<SyncContextType>({
 
 export const useSync = () => useContext(SyncContext);
 
+/**
+ * Helper to upload raw blobs from Dexie to Supabase Storage
+ */
+async function uploadOfflineFile(fileBlob: Blob | ArrayBuffer, fileName: string, bucket: string) {
+  const path = `offline_sync/${Date.now()}_${fileName}`;
+  
+  const { data, error } = await supabase.storage
+    .from(bucket)
+    .upload(path, fileBlob);
+    
+  if (error) throw error;
+  
+  const { data: urlData } = supabase.storage
+    .from(bucket)
+    .getPublicUrl(data.path);
+    
+  return urlData.publicUrl;
+}
+
 export default function SyncProvider({ children }: { children: React.ReactNode }) {
   const network = useNetworkState();
   const [isSyncing, setIsSyncing] = useState(false);
@@ -35,7 +54,6 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
       setPendingCount(count);
     };
     
-    // Initial check & Poll for changes
     updateCount();
     const interval = setInterval(updateCount, 2000); 
     return () => clearInterval(interval);
@@ -50,6 +68,7 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
 
     try {
       const actions = await db.offlineActions.where('status').equals('pending').toArray();
+      let successCount = 0;
 
       for (const action of actions) {
         try {
@@ -57,14 +76,23 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
           // Mark as synced
           if (action.id) {
              await db.offlineActions.update(action.id, { status: 'synced' });
+             successCount++;
           }
         } catch (error) {
           console.error(`Failed to sync action ${action.id}:`, error);
+          // Optional: Mark as 'failed' if it's a permanent error, 
+          // but usually we leave as 'pending' to retry on next connection.
         }
       }
 
-      toast.success("Sync Complete", { id: toastId, description: `Uploaded ${actions.length} items.` });
-      setPendingCount(0);
+      if (successCount > 0) {
+        toast.success("Sync Complete", { id: toastId, description: `Uploaded ${successCount} items.` });
+      } else {
+        toast.dismiss(toastId);
+      }
+      
+      const newCount = await db.offlineActions.where('status').equals('pending').count();
+      setPendingCount(newCount);
 
     } catch (error) {
       toast.error("Sync Error", { id: toastId });
@@ -83,10 +111,31 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
         break;
 
       case 'assignment_submission':
-         // Note: File uploads are tricky offline. Usually we sync metadata, 
-         // but for full file sync, we'd need to store the Blob in Dexie and upload here.
-         // For now, assuming payload contains the necessary text/link data.
-         await supabase.from('assignment_submissions').insert(payload);
+         // ✅ FIXED: Handle file upload if a blob exists in the payload
+         let fileUrl = payload.file_url;
+         
+         // If we have a stored blob (from Dexie) and no URL yet
+         if (payload.fileBlob && !fileUrl) {
+            try {
+                fileUrl = await uploadOfflineFile(
+                    payload.fileBlob, 
+                    payload.fileName || 'submission.pdf', 
+                    'assignments' // Ensure this bucket exists in Supabase
+                );
+            } catch (err) {
+                console.error("File upload failed inside sync:", err);
+                throw err; // Stop here, retry later
+            }
+         }
+
+         // Insert the record with the generated URL
+         await supabase.from('assignment_submissions').insert({
+            assignment_id: payload.assignmentId,
+            student_id: payload.studentId,
+            content_text: payload.contentText,
+            file_url: fileUrl,
+            submitted_at: payload.createdAt || new Date().toISOString()
+         });
          break;
 
       case 'announcement':
@@ -94,23 +143,28 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
         break;
 
       case 'chat_message':
-         const { sessionId, role, content } = payload;
+         const { sessionId, role, content, userId } = payload;
          await supabase.from('chat_messages').insert([{ 
            session_id: sessionId, 
+           user_id: userId,
            role, 
            content 
          }]);
          break;
 
       case 'mark_read':
-         const { userId, topicId, materialId } = payload;
-         await supabase.from('user_progress').upsert({ 
-           user_id: userId, 
-           topic_id: topicId, 
-           material_id: materialId, 
-           completed: true,
-           updated_at: new Date().toISOString()
-         });
+         const { topicId, materialId } = payload;
+         // Assuming we need the user ID. Ideally, payload has it, or we rely on RLS (if insert uses auth.uid())
+         // But upsert often needs explicit IDs.
+         if (payload.userId) {
+             await supabase.from('user_progress').upsert({ 
+               user_id: payload.userId, 
+               topic_id: topicId, 
+               material_id: materialId, 
+               completed: true,
+               updated_at: new Date().toISOString()
+             });
+         }
          break;
          
       default:
@@ -123,6 +177,7 @@ export default function SyncProvider({ children }: { children: React.ReactNode }
     if (network.online && pendingCount > 0) {
       processQueue();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [network.online, pendingCount]);
 
   return (

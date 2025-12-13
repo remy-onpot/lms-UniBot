@@ -1,30 +1,60 @@
-import { createClient } from "@/lib/supabase/server";
-import { redirect } from "next/navigation";
-import DashboardClient from "./DashboardClient";
-import { UserProfile } from "@/types";
+import { redirect } from 'next/navigation';
+import { createClient } from '@/lib/supabase/server';
+import { StudentDashboard } from '@/components/features/dashboard/StudentDashboard';
+import { LecturerDashboard } from '@/components/features/dashboard/LecturerDashboard';
+import { CourseService } from '@/lib/services/course.service';
+import { ClassService } from '@/lib/services/class.service';
+import { UserProfile } from '@/types';
 
 export default async function DashboardPage() {
   const supabase = await createClient();
   
-  // 1. Secure Session Check
   const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return redirect('/login');
 
-  if (!user) {
-    redirect("/login");
-  }
-
-  // 2. Pre-fetch Profile (Critical for Role-Based Routing)
   const { data: profile } = await supabase
-    .from("users")
-    .select("*")
-    .eq("id", user.id)
+    .from('users')
+    .select('*')
+    .eq('id', user.id)
     .single();
 
-  if (!profile) {
-    // Edge case: User exists in Auth but not in DB (shouldn't happen with triggers)
-    redirect("/login"); 
-  }
+  if (!profile) return redirect('/onboarding');
 
-  // 3. Hand off to Client (Efficiency: No waterfall)
-  return <DashboardClient user={user} initialProfile={profile as UserProfile} />;
+  const userProfile = profile as UserProfile;
+
+  // 3. Role-Based Data Fetching
+  if (userProfile.role === 'lecturer') {
+    // ✅ FIX: Use new method name and pass strictly required args
+    const classes = await ClassService.getDashboardClasses(
+        user.id, 
+        userProfile.role, 
+        false // Lecturers aren't course reps in this context
+    );
+    
+    return (
+      <LecturerDashboard 
+        profile={userProfile} 
+        classes={classes} 
+      />
+    );
+  } 
+  
+  // Default: Student Dashboard
+  const courses = await CourseService.getStudentCourses(user.id);
+  
+  const dashboardCourses = courses.map((c: any) => ({
+    id: c.id,
+    title: c.title,
+    className: c.classes?.name || 'Unknown Class',
+    progress: c.progress || 0,
+    quizCount: c.quizCount || 0,
+    assignmentCount: c.assignmentCount || 0
+  }));
+
+  return (
+    <StudentDashboard 
+      profile={userProfile} 
+      courses={dashboardCourses} 
+    />
+  );
 }

@@ -1,14 +1,11 @@
-// src/app/layout.tsx (FINAL REWRITE - Fixing Duplication)
-
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
+import "./globals.css"; // ✅ Correct location for global styles
 import { ThemeProvider } from "@/components/ThemeProvider";
 import QueryProvider from "@/components/providers/QueryProvider";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Toaster } from "sonner";
 import Script from "next/script"; 
-import FaceProviderClient from "@/components/ui/FaceProviderClient";
 import SyncProvider from "@/components/providers/SyncProvider";
 
 // --- Fonts ---
@@ -22,7 +19,6 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-// --- Metadata (SEO + PWA) ---
 export const metadata: Metadata = {
   title: "UniBot LMS",
   description: "AI-Powered Classroom Assistant",
@@ -34,12 +30,11 @@ export const metadata: Metadata = {
   },
 };
 
-// --- Viewport (Mobile Scaling) ---
 export const viewport: Viewport = {
   themeColor: "#4f46e5",
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1, // Prevents zooming on inputs
+  maximumScale: 1, 
 };
 
 export default function RootLayout({
@@ -52,7 +47,6 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors duration-300`}
       >
-        {/* --- Google Analytics --- */}
         <Script
           strategy="afterInteractive"
           src={`https://www.googletagmanager.com/gtag/js?id=${process.env.NEXT_PUBLIC_GA_ID}`}
@@ -72,7 +66,6 @@ export default function RootLayout({
           }}
         />
 
-        {/* --- App Shell & Providers --- */}
         <ErrorBoundary>
           <QueryProvider>
             <ThemeProvider
@@ -81,11 +74,9 @@ export default function RootLayout({
               enableSystem
               disableTransitionOnChange
             >
-              {/* 🏆 FIX: Nest providers and render {children} ONLY ONCE */}
+              {/* ✅ OPTIMIZED: Removed deleted FaceProviderClient */}
               <SyncProvider> 
-                <FaceProviderClient>
                   {children}
-                </FaceProviderClient>
               </SyncProvider>
               
               <Toaster position="top-right" richColors closeButton />

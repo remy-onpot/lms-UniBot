@@ -4,14 +4,13 @@ import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { 
-  ChevronRight, LogOut, TrendingUp, User, Target, 
+  ChevronRight, LogOut, TrendingUp, Target, 
   Loader2, Trophy, GraduationCap, Camera, Mail, Phone, Edit3, Save, X 
 } from 'lucide-react';
 import { GamificationService, Achievement } from '@/lib/services/gamification.service';
 import { UserProfile } from '@/types';
 import { Button } from '@/components/ui/Button';
-import { UniBotFace } from '@/components/ui/UniBotFace';
-import { useFace } from '@/components/ui/FaceProvider';
+// ✅ Removed UniBotFace & useFace imports
 
 // Feature Components
 import { OverviewTab } from '@/components/features/profile/OverviewTab';
@@ -20,7 +19,6 @@ import { AchievementsTab } from '@/components/features/profile/AchievementsTab';
 
 export default function StudentProfilePage() {
   const router = useRouter();
-  const face = useFace();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const [loading, setLoading] = useState(true);
@@ -73,7 +71,6 @@ export default function StudentProfilePage() {
         (async () => {
              const { data: enrollments } = await supabase.from('class_enrollments').select('class_id').eq('student_id', user.id);
              if (!enrollments?.length) return { total: 0, completed: 0 };
-             const classIds = enrollments.map(e => e.class_id);
              // Approximate counts
              return { total: 10, completed: 5 }; 
         })(),
@@ -109,7 +106,6 @@ export default function StudentProfilePage() {
       setProfile(prev => prev ? ({ ...prev, ...formData }) : null);
       setIsEditing(false);
       toast.success("Profile updated");
-      face.pulse('happy');
     } catch (e) {
       toast.error("Update failed");
     }
@@ -118,7 +114,6 @@ export default function StudentProfilePage() {
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files?.[0] || !profile) return;
     setUploading(true);
-    face.pulse('thinking', 3000);
     
     try {
       const file = e.target.files[0];
@@ -128,11 +123,9 @@ export default function StudentProfilePage() {
       
       await supabase.from('users').update({ avatar_url: publicUrl }).eq('id', profile.id);
       setProfile({ ...profile, avatar_url: publicUrl });
-      toast.success('Avatar looks great!');
-      face.pulse('happy');
+      toast.success('Avatar updated successfully!');
     } catch (e) { 
       toast.error("Upload failed"); 
-      face.pulse('sad');
     } finally { 
       setUploading(false); 
     }
@@ -140,7 +133,7 @@ export default function StudentProfilePage() {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    await fetch('/auth/signout', { method: 'POST' }); // Server clear
+    await fetch('/auth/signout', { method: 'POST' }); 
     window.location.href = '/login';
   };
 

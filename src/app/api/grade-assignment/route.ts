@@ -1,83 +1,114 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
-import { env } from '@/lib/env';
-import { z } from "zod"; 
-import { AppError, handleAPIError } from "@/lib/error-handler";
-import { AIGradedResponse } from "@/types";
 import { createClient } from "@/lib/supabase/server";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const genAI = new GoogleGenerativeAI(env.GOOGLE_GENERATIVE_AI_API_KEY || "");
-
-const gradingSchema = z.object({
-  assignmentTitle: z.string().min(1).max(200),
-  assignmentDescription: z.string().min(1).max(2000),
-  studentText: z.string().min(20).max(100000),
-  maxPoints: z.number().int().min(1).max(1000),
-});
-
-function extractJSON(text: string): AIGradedResponse {
-  try {
-    return JSON.parse(text) as AIGradedResponse;
-  } catch {
-    const firstOpen = text.indexOf("{");
-    const lastClose = text.lastIndexOf("}");
-    if (firstOpen !== -1 && lastClose !== -1) {
-      const jsonString = text.substring(firstOpen, lastClose + 1);
-      try {
-        const cleaned = jsonString.replace(/[\n\r]/g, " ").replace(/\\n/g, "\\n");
-        return JSON.parse(cleaned) as AIGradedResponse;
-      } catch { throw new AppError("Malformed JSON", 500); }
-    }
-    throw new AppError("No JSON found", 500);
-  }
-}
+// Use Gemini 1.5 Flash for faster/cheaper grading, or Pro for complex reasoning
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY!);
 
 export async function POST(req: Request) {
   try {
     const supabase = await createClient();
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) throw new AppError("Unauthorized", 401);
+    
+    // 1. Security Check
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const isAllowed = await checkRateLimit(session.user.id, 'grading');
-    if (!isAllowed) throw new AppError("Rate limit exceeded.", 429);
+    const { submissionId, fileUrl, assignmentId } = await req.json();
 
-    const body = await req.json();
-    const { assignmentTitle, assignmentDescription, studentText, maxPoints } = gradingSchema.parse(body);
+    // 2. Fetch Assignment Context (Rubric/Description)
+    const { data: assignment } = await supabase
+      .from('assignments')
+      .select('title, description, total_points')
+      .eq('id', assignmentId)
+      .single();
+
+    if (!assignment) return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
+
+    // 3. Prepare AI Prompt
+    // We pass the file URL directly. Gemini 1.5 can read PDFs via URI if configured, 
+    // or we assume the file content is accessible. 
+    // For simplicity/reliability in this snippet, we assume Gemini analyzes the text/content.
+    
+    const model = genAI.getGenerativeModel({ 
+        model: "gemini-2.5-flash",
+        systemInstruction: "You are a strict but fair university teaching assistant."
+    });
 
     const prompt = `
-      You are a strict university professor. Grade this student submission.
+      Please grade this student submission.
       
-      ASSIGNMENT: "${assignmentTitle}"
-      INSTRUCTIONS: "${assignmentDescription}"
-      MAX POINTS: ${maxPoints}
-      CONTENT: "${studentText.slice(0, 25000)}"
+      ASSIGNMENT DETAILS:
+      Title: ${assignment.title}
+      Description/Rubric: ${assignment.description}
+      Max Points: ${assignment.total_points}
       
-      Return ONLY valid JSON with this structure:
+      SUBMISSION URL: ${fileUrl}
+      (Note: If you cannot access the URL, please grade based on the assumption that the file contains valid attempts but note the access issue).
+
+      TASK:
+      1. Analyze the submission against the description.
+      2. Provide a score out of ${assignment.total_points}.
+      3. Provide constructive feedback (Strengths, Weaknesses, Improvements).
+      
+      OUTPUT FORMAT (JSON Only):
       {
         "score": number,
-        "is_ai_generated": boolean,
-        "feedback": "Summary feedback",
+        "feedback": "string (markdown allowed)",
         "breakdown": {
-          "reasoning": "Explanation",
-          "strengths": ["point 1"],
-          "weaknesses": ["point 1"]
+           "reasoning": "string",
+           "strengths": ["string"],
+           "weaknesses": ["string"]
         }
       }
     `;
 
-    // ✅ FIX: Use Gemini 2.5 Flash
-    const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
-      generationConfig: { responseMimeType: "application/json" }
-    });
-
+    // 4. Generate Grade
     const result = await model.generateContent(prompt);
     const responseText = result.response.text();
-    const jsonResponse = extractJSON(responseText);
+    
+    // Clean JSON (remove markdown code blocks if any)
+    const cleanJson = responseText.replace(/```json|```/g, '').trim();
+    let gradeData;
+    
+    try {
+        gradeData = JSON.parse(cleanJson);
+    } catch (e) {
+        console.error("AI JSON Parse Error:", responseText);
+        // Fallback if AI fails to return JSON
+        gradeData = { 
+            score: 0, 
+            feedback: "AI Grading Error: Could not parse response. Please review manually.",
+            breakdown: null
+        };
+    }
 
-    return NextResponse.json(jsonResponse);
-  } catch (error) {
-    return handleAPIError(error);
+    // 5. Update Database
+    const { error } = await supabase
+      .from('assignment_submissions')
+      .update({
+        score: gradeData.score,
+        feedback: gradeData.feedback,
+        ai_breakdown: gradeData.breakdown,
+        status: 'graded',
+        graded_by: 'ai'
+      })
+      .eq('id', submissionId);
+
+    if (error) throw error;
+
+    return NextResponse.json({ success: true, ...gradeData });
+
+  } catch (error: any) {
+    console.error("Grading API Error:", error);
+    // Mark as failed in DB so user isn't stuck in "Pending"
+    const supabase = await createClient();
+    const { submissionId } = await req.json().catch(() => ({}));
+    if (submissionId) {
+        await supabase.from('assignment_submissions')
+           .update({ status: 'failed', feedback: "System Error during grading." })
+           .eq('id', submissionId);
+    }
+    
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { BUSINESS_LOGIC, PlanType } from "@/lib/constants";
 
-const TEST_COUPON = "UNIBOT-QA-100";
-
 export async function POST(req: Request) {
   try {
     const supabase = await createClient();
@@ -12,50 +10,44 @@ export async function POST(req: Request) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json();
-    const { plan, type, accessType, coupon } = body; 
-    // plan = target ID (course_id or class_id or plan_tier)
+    const { plan, type, accessType } = body; 
+    // plan = target ID (class_id for bundles, course_id for single)
 
-    // --- 🛡️ SECURITY CHECK: PREVENT DOUBLE PAYMENT ---
+    // --- 🛡️ SECURITY CHECK ---
     if (type === 'class_unlock') {
        const now = new Date().toISOString();
        
-       // Check if they already own this exact item
-       let query = supabase.from('student_course_access')
-         .select('id')
-         .eq('student_id', user.id)
-         .gt('expires_at', now); // Must be active
-
-       if (accessType === 'bundle') {
-          // Check for existing Class Bundle
-          query = query.eq('class_id', plan);
-       } else {
-          // Check for Single Course OR Parent Bundle
-          // 1. Get class_id of the course to check for bundle ownership
-          const { data: courseData } = await supabase
-            .from('courses')
-            .select('class_id')
-            .eq('id', plan)
-            .single();
-
-          const classId = courseData?.class_id;
-
-          // Check if they own the specific course OR the class bundle
-          if (classId) {
-            query = query.or(`course_id.eq.${plan},class_id.eq.${classId}`);
-          } else {
-            query = query.eq('course_id', plan);
-          }
+       // 1. Check for Bundle Access (Super Key)
+       // If they own the bundle, they own EVERYTHING.
+       // We need to find the class_id. If 'plan' is a course, fetch its class.
+       let classId = plan;
+       if (accessType === 'single_course') {
+          const { data: course } = await supabase.from('courses').select('class_id').eq('id', plan).single();
+          classId = course?.class_id;
        }
 
-       const { data: existing } = await query.maybeSingle();
+       if (classId) {
+          const { data: bundle } = await supabase.from('class_enrollments')
+             .select('id')
+             .eq('student_id', user.id)
+             .eq('class_id', classId)
+             .eq('access_type', 'semester_bundle')
+             .gt('expires_at', now)
+             .maybeSingle();
 
-       if (existing) {
-         // ✅ ALREADY OWNED: Return "Bypass" to simulate success without charging
-         return NextResponse.json({ 
-           status: true, 
-           message: "You already have access.", 
-           bypass: true 
-         });
+          if (bundle) return NextResponse.json({ status: true, message: "You have the bundle!", bypass: true });
+       }
+
+       // 2. Check for Single Course Access
+       if (accessType === 'single_course') {
+          const { data: single } = await supabase.from('student_course_access')
+             .select('id')
+             .eq('student_id', user.id)
+             .eq('course_id', plan)
+             .gt('expires_at', now)
+             .maybeSingle();
+
+          if (single) return NextResponse.json({ status: true, message: "Course already unlocked.", bypass: true });
        }
     }
     // ---------------------------------------------------
@@ -65,37 +57,42 @@ export async function POST(req: Request) {
 
     // --- PRICE CALCULATION ---
     if (type === 'subscription') {
-        const planDetails = BUSINESS_LOGIC.PLANS[plan as PlanType];
+        const planKey = plan as PlanType;
+        const planDetails = BUSINESS_LOGIC.PLANS[planKey];
         if (!planDetails) return NextResponse.json({ error: "Invalid Plan" }, { status: 400 });
         amount = planDetails.price;
         metadata = { type: 'subscription', plan_tier: plan };
     } 
     else if (type === 'class_unlock') {
-        const singlePrice = BUSINESS_LOGIC.COHORT.pricing.single_course;
+        const singlePrice = BUSINESS_LOGIC.COHORT.PRICING.SINGLE_COURSE;
 
         if (accessType === 'bundle') {
+           // 'plan' is class_id
            const { count } = await supabase
              .from('courses')
              .select('id', { count: 'exact', head: true })
              .eq('class_id', plan)
              .eq('status', 'active');
            
-           const courseCount = count || 0;
-           if (courseCount === 0) throw new Error("No courses to bundle.");
-
-           amount = (singlePrice * courseCount) * 0.75; // 25% Discount
-           metadata = { type: 'class_unlock', access_type: 'bundle', class_id: plan };
+           const courseCount = count || 1;
+           amount = (singlePrice * courseCount) * (1 - BUSINESS_LOGIC.COHORT.PRICING.BUNDLE_DISCOUNT_PERCENT);
+           metadata = { type: 'class_unlock', access_type: 'semester_bundle', class_id: plan };
         } else {
+           // 'plan' is course_id
            amount = singlePrice;
-           metadata = { type: 'class_unlock', access_type: 'single', course_id: plan };
+           // We ALSO need the class_id to ensure they are on the roster
+           const { data: c } = await supabase.from('courses').select('class_id').eq('id', plan).single();
+           
+           metadata = { 
+               type: 'class_unlock', 
+               access_type: 'single_course', 
+               course_id: plan,
+               class_id: c?.class_id 
+           };
         }
     }
 
-    // --- TEST COUPON BYPASS ---
-    if (coupon === TEST_COUPON) {
-        await handleSuccessfulPayment(supabase, user.id, metadata, amount);
-        return NextResponse.json({ status: true, message: "Test Coupon Applied", bypass: true });
-    }
+    if (amount <= 0) throw new Error("Invalid calculation.");
 
     // --- PAYSTACK INITIALIZATION ---
     const params = JSON.stringify({
@@ -119,8 +116,13 @@ export async function POST(req: Request) {
     });
 
     const data = await paystackRes.json();
-
     if (!data.status) throw new Error(data.message || "Payment init failed");
+
+    // --- DEV SIMULATION (Remove in Prod if not needed) ---
+    if (process.env.NODE_ENV === 'development' && process.env.SIMULATE_PAYMENT === 'true') {
+        await handleSuccessfulPayment(supabase, user.id, metadata);
+        return NextResponse.json({ status: true, message: "Dev Simulation", bypass: true });
+    }
 
     return NextResponse.json({ authorization_url: data.data.authorization_url, reference: data.data.reference });
 
@@ -130,10 +132,10 @@ export async function POST(req: Request) {
   }
 }
 
-// Internal Helper
-async function handleSuccessfulPayment(supabase: any, userId: string, metadata: any, amount: number) {
+// ✅ UPDATED: Handles both tables
+async function handleSuccessfulPayment(supabase: any, userId: string, metadata: any) {
     const expiryDate = new Date();
-    expiryDate.setMonth(expiryDate.getMonth() + 6); 
+    expiryDate.setMonth(expiryDate.getMonth() + 6); // 6 Month Access
 
     if (metadata.type === 'subscription') {
         await supabase.from('users').update({ 
@@ -142,18 +144,32 @@ async function handleSuccessfulPayment(supabase: any, userId: string, metadata: 
         }).eq('id', userId);
     } 
     else if (metadata.type === 'class_unlock') {
-        // Upsert to prevent duplicate key errors if race condition
-        const data = {
-            student_id: userId,
-            amount_paid: amount,
-            expires_at: expiryDate.toISOString(),
-            access_type: metadata.access_type
-        };
+        
+        // 1. Always ensure they are on the Class Roster
+        if (metadata.class_id) {
+            const enrollmentPayload: any = {
+                student_id: userId,
+                class_id: metadata.class_id,
+                joined_at: new Date().toISOString(),
+                has_paid: metadata.access_type === 'semester_bundle' // Only true if they bought the bundle
+            };
+            
+            // Only update access_type if it's a bundle (don't downgrade a bundle owner to single)
+            if (metadata.access_type === 'semester_bundle') {
+                enrollmentPayload.access_type = 'semester_bundle';
+                enrollmentPayload.expires_at = expiryDate.toISOString();
+            }
 
-        if (metadata.access_type === 'bundle') {
-             await supabase.from('student_course_access').upsert({ ...data, class_id: metadata.class_id }, { onConflict: 'student_id, class_id' });
-        } else {
-             await supabase.from('student_course_access').upsert({ ...data, course_id: metadata.course_id }, { onConflict: 'student_id, course_id' });
+            await supabase.from('class_enrollments').upsert(enrollmentPayload, { onConflict: 'student_id, class_id' });
+        }
+
+        // 2. If Single Course, grant specific access
+        if (metadata.access_type === 'single_course' && metadata.course_id) {
+             await supabase.from('student_course_access').upsert({ 
+                 student_id: userId, 
+                 course_id: metadata.course_id,
+                 expires_at: expiryDate.toISOString()
+             }, { onConflict: 'student_id, course_id' });
         }
     }
 }

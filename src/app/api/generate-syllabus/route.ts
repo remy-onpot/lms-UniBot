@@ -29,7 +29,7 @@ export async function POST(req: Request) {
 
     // 2. The Ghostwriter Prompt
     const { object } = await generateObject({
-      model: google('gemini-1.5-pro-latest'), // Use Pro for better reasoning on "Messy" outlines
+      model: google('gemini-2.5-pro-latest'), // Use Pro for better reasoning on "Messy" outlines
       schema: syllabusSchema,
       prompt: `
         You are an expert University Curriculum Designer.

@@ -1,5 +1,5 @@
 // src/lib/permissions.ts
-import { COHORT_RULES, SAAS_PLANS, PlanTier, UserRole } from './constants';
+import { COHORT_RULES, SAAS_PLANS, PlanType, UserRole } from './constants';
 
 interface AccessContext {
   role: UserRole;
@@ -37,12 +37,12 @@ export const Permissions = {
     return true; 
   },
 
-  canCreateClass: (currentClassCount: number, tier: PlanTier) => {
+  canCreateClass: (currentClassCount: number, tier: PlanType) => {
     const plan = SAAS_PLANS[tier as keyof typeof SAAS_PLANS] || SAAS_PLANS.starter;
     return currentClassCount < plan.limits.max_classes;
   },
 
-  canAddStudent: (currentStudentCount: number, tier: PlanTier) => {
+  canAddStudent: (currentStudentCount: number, tier: PlanType) => {
     const plan = SAAS_PLANS[tier as keyof typeof SAAS_PLANS] || SAAS_PLANS.starter;
     return currentStudentCount < plan.limits.max_students_per_class;
   }

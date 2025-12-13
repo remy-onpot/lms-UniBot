@@ -1,7 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import { MobileNav } from "@/components/layout/MobileNav";
-import { Sidebar } from "@/components/layout/Sidebar"; // ✅ New Component
+import { Sidebar } from "@/components/layout/Sidebar";
+import { LoginTracker } from "@/components/features/gamification/LoginTracker";
 
 export default async function DashboardLayout({
   children,
@@ -10,9 +11,11 @@ export default async function DashboardLayout({
 }) {
   const supabase = await createClient();
 
+  // 1. Auth Check
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  // 2. Role Check (Needed for Sidebar/Nav customization)
   const { data: profile } = await supabase
     .from('users')
     .select('role')
@@ -24,17 +27,18 @@ export default async function DashboardLayout({
   return (
     <div className="min-h-screen bg-slate-50">
       
-      {/* 🖥️ Desktop Sidebar (Hidden on Mobile) */}
+      {/* 🕵️ GAMIFICATION TRIGGER */}
+      {/* This invisible component records the daily login for streaks & badges */}
+      <LoginTracker userId={user.id} />
+
+      {/* 🖥️ Desktop Sidebar */}
       <Sidebar role={role} />
 
-      {/* 📱 Mobile Bottom Nav (Hidden on Desktop) */}
+      {/* 📱 Mobile Bottom Nav */}
       <MobileNav role={role} />
 
-      {/* Layout Wrapper:
-         md:pl-64 -> Pushes content right to make room for Sidebar on Desktop
-         pb-24 -> Pushes content up to make room for Bottom Nav on Mobile
-         md:pb-0 -> Removes bottom padding on Desktop
-      */}
+      {/* Main Content Area */}
+      {/* md:pl-64 pushes content to the right on desktop to account for the fixed Sidebar */}
       <main className="transition-all duration-300 md:pl-64 pb-24 md:pb-0 min-h-screen">
         <div className="max-w-7xl mx-auto">
            {children}

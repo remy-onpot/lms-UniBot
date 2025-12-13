@@ -1,21 +1,32 @@
-import { supabase } from '../supabase'; // Relative path
-import { ChatSession, ChatMessage } from '../../types'; // Relative path
+import { supabase } from '../supabase'; 
+import { ChatSession, ChatMessage } from '../../types'; 
 
 export const ChatService = {
   
-  // Create a new conversation thread (optionally linked to a material)
-  async createSession(userId: string, title: string = 'New Chat', materialId?: string) {
+  // --- READ METHODS ---
+
+  async getUserSessions(userId: string) {
     const { data, error } = await supabase
       .from('chat_sessions')
-      .insert([{ user_id: userId, title, material_id: materialId }])
-      .select()
-      .single();
+      .select('*')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false });
 
     if (error) throw error;
-    return data as ChatSession;
+    return data as ChatSession[];
   },
 
-  // Get the most recent session for a specific material
+  async getSessionMessages(sessionId: string) {
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .select('*')
+      .eq('session_id', sessionId)
+      .order('created_at', { ascending: true });
+
+    if (error) throw error;
+    return data as ChatMessage[];
+  },
+
   async getSessionByMaterial(userId: string, materialId: string) {
     const { data, error } = await supabase
       .from('chat_sessions')
@@ -30,46 +41,37 @@ export const ChatService = {
     return data as ChatSession | null;
   },
 
-  // Fetch all conversation threads for the sidebar
-  async getUserSessions(userId: string) {
+  // --- WRITE METHODS (Optimized) ---
+
+  async createSession(userId: string, title: string = 'New Chat', materialId?: string) {
     const { data, error } = await supabase
       .from('chat_sessions')
-      .select('*')
-      .eq('user_id', userId)
-      .order('updated_at', { ascending: false });
-
-    if (error) throw error;
-    return data as ChatSession[];
-  },
-
-  // Fetch messages for a specific thread
-  async getSessionMessages(sessionId: string) {
-    const { data, error } = await supabase
-      .from('chat_messages')
-      .select('*')
-      .eq('session_id', sessionId)
-      .order('created_at', { ascending: true });
-
-    if (error) throw error;
-    return data as ChatMessage[];
-  },
-
-  // Save a message (User or AI)
-  async saveMessage(sessionId: string, role: 'user' | 'assistant', content: string) {
-    const { data, error } = await supabase
-      .from('chat_messages')
-      .insert([{ session_id: sessionId, role, content }])
+      .insert([{ user_id: userId, title, material_id: materialId }])
       .select()
       .single();
 
     if (error) throw error;
+    return data as ChatSession;
+  },
 
-    // Update the session's "updated_at" timestamp
-    await supabase
-      .from('chat_sessions')
-      .update({ updated_at: new Date().toISOString() })
-      .eq('id', sessionId);
+  /**
+   * ✅ OPTIMIZED: Now only performs 1 DB call.
+   * The Postgres Trigger handles the session 'updated_at' timestamp automatically.
+   */
+  async saveMessage(sessionId: string, role: 'user' | 'assistant', content: string, images?: string[]) {
+    // 1. Insert Message (Trigger auto-updates the session)
+    const { data, error } = await supabase
+      .from('chat_messages')
+      .insert([{ 
+        session_id: sessionId, 
+        role, 
+        content,
+        images: images || [] // Support for Gemini Vision inputs
+      }])
+      .select()
+      .single();
 
+    if (error) throw error;
     return data as ChatMessage;
   },
 
@@ -77,6 +79,15 @@ export const ChatService = {
     const { error } = await supabase
       .from('chat_sessions')
       .update({ title })
+      .eq('id', sessionId);
+      
+    if (error) throw error;
+  },
+
+  async deleteSession(sessionId: string) {
+    const { error } = await supabase
+      .from('chat_sessions')
+      .delete()
       .eq('id', sessionId);
       
     if (error) throw error;

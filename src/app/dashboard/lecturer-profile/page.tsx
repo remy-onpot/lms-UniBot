@@ -7,8 +7,8 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { 
-  Search, Archive, Plus, Users, FileText, 
-  ChevronRight, LayoutDashboard, Crown, Loader2, Lock, 
+  Search, Archive, Plus, Users, 
+  ChevronRight, Loader2, Lock, 
   BookOpen, ArrowRight, TrendingUp 
 } from 'lucide-react';
 import { getPlanLimits } from '@/lib/constants'; 
@@ -41,25 +41,32 @@ export default function LecturerConsole() {
       setProfile(userProfile);
       setLimits(getPlanLimits(userProfile.role, userProfile.plan_tier, userProfile.is_course_rep));
 
-      // 1. Fetch Classes with Student Count
+      // 1. Fetch Classes with Relations
       const { data: classList } = await supabase
         .from('classes')
-        .select('*, students:student_course_access(count)')
+        .select('*, students:class_enrollments(count)') 
         .eq('lecturer_id', user.id);
 
       if (!classList) return;
 
-      const processed = classList.map((c: any) => ({
-        ...c,
-        student_count: c.students?.[0]?.count || 0
+      // 2. Map to DashboardClass Type
+      const processed: DashboardClass[] = classList.map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        lecturer_id: c.lecturer_id,
+        access_code: c.access_code,
+        created_at: c.created_at,
+        status: c.status, // TS now knows this exists on DashboardClass
+        type: c.type,
+        studentCount: c.students?.[0]?.count || 0 // TS knows this exists too
       }));
 
-      const active = processed.filter((c: any) => c.status === 'active');
-      const archived = processed.filter((c: any) => c.status === 'archived');
+      const active = processed.filter(c => c.status === 'active');
+      const archived = processed.filter(c => c.status === 'archived');
       
       setActiveClasses(active);
       setArchivedClasses(archived);
-      setSaasUsage(active.filter((c: any) => c.type === 'saas').length);
+      setSaasUsage(active.filter(c => c.type === 'saas').length);
 
     } catch (e) {
       toast.error("Failed to load dashboard data.");
@@ -76,8 +83,11 @@ export default function LecturerConsole() {
   const handleAction = async () => {
     if (!targetItem || !profile) return;
     try {
-      if (targetItem.action === 'archive') await ClassService.archiveClass(targetItem.id, profile.id);
-      else await ClassService.deleteClass(targetItem.id, profile.id);
+      if (targetItem.action === 'archive') {
+          await ClassService.archiveClass(targetItem.id, profile.id); // 2 args
+      } else {
+          await ClassService.deleteClass(targetItem.id, profile.id); // 2 args
+      }
       toast.success("Success");
       setTargetItem(null); 
       fetchLecturerData(); 
@@ -93,8 +103,23 @@ export default function LecturerConsole() {
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900">
       
-      <OverLimitModal activeClasses={activeClasses} limit={limits.max_classes} onArchive={(id) => handleAction()} />
+      {/* Modals */}
+      <OverLimitModal 
+        isOpen={isOverLimit} 
+        activeClasses={activeClasses} 
+        limit={limits.max_classes} 
+        onArchive={(id) => {
+            setTargetItem({ id, name: 'Target Class', action: 'archive' });
+            handleAction(); // Trigger immediate action or open confirm if preferred
+        }} 
+      />
 
+      <UpgradeModal 
+        isOpen={showUpgradeModal} 
+        onClose={() => setShowUpgradeModal(false)} 
+      />
+
+      {/* Header */}
       <header className="bg-slate-900 border-b border-slate-800 pt-8 pb-16 px-4 md:px-8 relative overflow-hidden">
          <div className="max-w-7xl mx-auto relative z-10">
             <div className="flex justify-between items-center mb-10">
@@ -112,7 +137,9 @@ export default function LecturerConsole() {
                <div className="bg-white p-6 rounded-2xl shadow-lg border border-slate-100 flex justify-between items-center">
                   <div>
                      <p className="text-slate-500 text-xs font-bold uppercase">Total Enrollment</p>
-                     <h3 className="text-3xl font-black text-slate-900">{activeClasses.reduce((acc, c) => acc + (c.studentCount || 0), 0)}</h3>
+                     <h3 className="text-3xl font-black text-slate-900">
+                        {activeClasses.reduce((acc, c) => acc + (c.studentCount || 0), 0)}
+                     </h3>
                   </div>
                   <div className="p-3 bg-blue-50 text-blue-600 rounded-xl"><Users className="w-6 h-6"/></div>
                </div>
@@ -125,13 +152,10 @@ export default function LecturerConsole() {
                   <div className="p-3 bg-indigo-50 text-indigo-600 rounded-xl"><BookOpen className="w-6 h-6"/></div>
                </div>
 
-               {/* ✅ REPLACED REVENUE WITH ENGAGEMENT/PERFORMANCE */}
                <div className="bg-slate-800 p-6 rounded-2xl shadow-lg border border-slate-700 flex justify-between items-center text-white">
                   <div>
                      <p className="text-slate-400 text-xs font-bold uppercase">Avg. Participation</p>
-                     <h3 className="text-3xl font-black flex items-center gap-1">
-                        --%
-                     </h3>
+                     <h3 className="text-3xl font-black flex items-center gap-1">--%</h3>
                   </div>
                   <div className="p-3 bg-slate-700 text-green-400 rounded-xl"><TrendingUp className="w-6 h-6"/></div>
                </div>
@@ -139,7 +163,7 @@ export default function LecturerConsole() {
          </div>
       </header>
 
-      {/* BODY */}
+      {/* Body */}
       <div className="max-w-7xl mx-auto px-4 md:px-8 py-10 space-y-8">
          <div className="flex flex-col md:flex-row gap-4 items-center">
            <button onClick={handleCreateClick} className="w-full md:w-auto px-8 py-4 bg-slate-900 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg hover:bg-slate-800 active:scale-95 transition-all">
@@ -155,12 +179,13 @@ export default function LecturerConsole() {
            </button>
          </div>
 
+         {/* Class Grid */}
          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-           {filteredActive.map((cls) => (
+           {(showArchived ? filteredArchived : filteredActive).map((cls) => (
              <div key={cls.id} className="bg-white rounded-2xl border border-slate-200 p-6 hover:border-indigo-300 transition-all shadow-sm">
                <div className="flex justify-between items-start mb-4">
                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg font-bold text-xs">{cls.access_code}</div>
-                 <Badge variant="outline">{cls.studentCount} Students</Badge>
+                 <Badge variant="outline">{cls.studentCount || 0} Students</Badge>
                </div>
                <h3 className="font-bold text-lg text-slate-900 mb-6 truncate">{cls.name}</h3>
                <div className="grid grid-cols-2 gap-2">

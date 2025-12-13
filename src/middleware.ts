@@ -1,17 +1,17 @@
-// src/middleware.ts (FINAL, SECURE, LOOP-FREE REWRITE)
-
+// src/middleware.ts
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
-  // 1. Initialize the response object that will carry the refreshed cookies
+  // 1. Create an initial response object. 
+  // We will attach cookies to this object, but if we redirect, 
+  // we must copy these cookies to the redirect response.
   let response = NextResponse.next({
     request: {
       headers: request.headers,
     },
   })
 
-  // 2. Create the Supabase client (Session Refresh happens here)
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -20,19 +20,22 @@ export async function middleware(request: NextRequest) {
         getAll() {
           return request.cookies.getAll()
         },
-        /** * 🏆 CRITICAL FIX: Set the refreshed session tokens directly on 
-         * the response object, ensuring they are sent back to the client.
-         */
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
+          cookiesToSet.forEach(({ name, value, options }) => {
+            // Update the request cookies so the client sees them immediately
+            request.cookies.set(name, value)
+            // Update the response cookies (what passes to the browser)
             response.cookies.set(name, value, options)
-          )
+          })
         },
       },
     }
   )
 
+  // 2. Check the user session
+  // IMPORTANT: This triggers the token refresh if needed.
   const { data: { user } } = await supabase.auth.getUser()
+
   const path = request.nextUrl.pathname;
 
   // 🛡️ SECURITY CONFIGURATION
@@ -40,43 +43,49 @@ export async function middleware(request: NextRequest) {
     path.startsWith('/dashboard') || 
     path.startsWith('/super-admin') ||
     path.startsWith('/ai-assistant') ||
-    // Protect API routes
     (path.startsWith('/api/') && !path.startsWith('/api/auth') && !path.startsWith('/api/payment/webhook'));
 
-  // Define paths that are ONLY for guests (Login, Sign-Up). 
-  // ✅ FIX: Exclude /auth/callback to prevent the loop after successful exchange.
   const isAuthRoute = 
     (path.startsWith('/login') || path.startsWith('/auth')) && 
     !path.startsWith('/auth/callback');
 
-  // 3. LOGIC: Redirect Unauthenticated Users (Accessing protected resources)
+  // 3. LOGIC: Redirect Unauthenticated Users
   if (isProtectedRoute && !user) {
-    // If it's an API call, return 401 JSON
     if (path.startsWith('/api/')) {
-        return NextResponse.json(
-            { error: 'Unauthorized: Please log in first.' }, 
-            { status: 401 }
-        );
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    // If it's a Page request, redirect to Login
-    const redirectUrl = new URL('/login', request.url);
-    redirectUrl.searchParams.set('next', path); 
-    return NextResponse.redirect(redirectUrl);
+    
+    const url = request.nextUrl.clone()
+    url.pathname = '/login'
+    url.searchParams.set('next', path)
+    
+    // 🏆 FIX: Create redirect response & COPY cookies from 'response'
+    const redirectResponse = NextResponse.redirect(url)
+    const allCookies = response.cookies.getAll()
+    allCookies.forEach(c => redirectResponse.cookies.set(c))
+    
+    return redirectResponse
   }
 
-  // 4. LOGIC: Redirect Authenticated Users (Accessing guest-only routes)
+  // 4. LOGIC: Redirect Authenticated Users
   if (isAuthRoute && user) {
-    // If they are already logged in and try to hit /login, send them to /dashboard
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+    const url = request.nextUrl.clone()
+    url.pathname = '/dashboard'
+    
+    // 🏆 FIX: Create redirect response & COPY cookies from 'response'
+    const redirectResponse = NextResponse.redirect(url)
+    const allCookies = response.cookies.getAll()
+    allCookies.forEach(c => redirectResponse.cookies.set(c))
+    
+    return redirectResponse
   }
 
-  // 5. Return the response, containing the refreshed cookies (if any)
+  // 5. If no redirect, return the original response with the cookies set
   return response
 }
 
 export const config = {
   matcher: [
-    /* Match all paths except static assets */
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|pdf)$).*)',
   ],
 }

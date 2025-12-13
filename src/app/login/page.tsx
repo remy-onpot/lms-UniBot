@@ -5,7 +5,6 @@ import { supabase } from '@/lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { UniBotMascot, MascotEmotion, MascotAction } from '@/components/ui/UniBotMascot';
-// FaceAnalyticsService removed
 import { Mail, Lock, User, Key, Check, Loader2, ArrowRight } from 'lucide-react';
 
 export default function LoginPage() {
@@ -24,6 +23,23 @@ export default function LoginPage() {
   const [role, setRole] = useState<'student' | 'lecturer' | 'ta'>('student');
   const [isCourseRep, setIsCourseRep] = useState(false);
   const [taCode, setTaCode] = useState('');
+
+  // 🛑 DISABLED SOCIAL HANDLER (The "Death Stare" Logic)
+  const handleSocialClick = (provider: string) => {
+    // 1. Trigger the "Stare"
+    setMascotEmotion('surprised'); 
+    setMascotAction('none');
+    
+    // 2. Feedback
+    toast.info(`${provider} login is coming soon!`, {
+      description: "Our engineers are still wiring this up.",
+    });
+
+    // 3. Reset after they get the message
+    setTimeout(() => {
+        setMascotEmotion('idle');
+    }, 2000);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,14 +63,12 @@ export default function LoginPage() {
         setMascotEmotion('cool');
         setMascotAction('backflip');
         
-        // Removed: FaceAnalyticsService.logLogin('email');
-        
         // Wait for animation, then redirect to dashboard
         await new Promise((res) => setTimeout(res, 1500));
         window.location.href = '/dashboard';
 
       } else {
-        // --- SIGN UP LOGIC (Securely setting user metadata for DB trigger) ---
+        // --- SIGN UP LOGIC ---
         if (!fullName.trim()) throw new Error('Please enter your full name');
         if (role === 'ta' && !taCode.trim()) throw new Error('TA invite code is required');
 
@@ -93,7 +107,6 @@ export default function LoginPage() {
       setMascotEmotion('sad');
       setMascotAction('none');
       
-      // Reset to idle after a bit
       setTimeout(() => setMascotEmotion('idle'), 3000);
     } finally {
       setLoading(false);
@@ -101,7 +114,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-dvhlate-900 flex flex-col justify-center items-center p-6 relative overflow-hidden font-sans">
+    <div className="min-h-dvh bg-slate-900 flex flex-col justify-center items-center p-6 relative overflow-hidden font-sans">
       
       {/* Background Decor */}
       <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_top_right,#1e1b4b,transparent)] opacity-40 pointer-events-none" />
@@ -116,8 +129,8 @@ export default function LoginPage() {
         {/* 🎭 UNI-BOT STAGE */}
         <div className="flex justify-center -mt-24 mb-4">
            <div className="relative w-48 h-48 drop-shadow-2xl transition-transform hover:scale-105 duration-300 cursor-pointer"
-                onMouseEnter={() => { if(mascotEmotion !== 'sad') setMascotEmotion('happy') }}
-                onMouseLeave={() => { if(mascotEmotion !== 'sad') setMascotEmotion('idle') }}>
+                onMouseEnter={() => { if(mascotEmotion !== 'sad' && mascotEmotion !== 'surprised') setMascotEmotion('happy') }}
+                onMouseLeave={() => { if(mascotEmotion !== 'sad' && mascotEmotion !== 'surprised') setMascotEmotion('idle') }}>
               <UniBotMascot 
                 size={190} 
                 emotion={mascotEmotion} 
@@ -126,13 +139,39 @@ export default function LoginPage() {
            </div>
         </div>
 
-        <div className="text-center mb-8">
+        <div className="text-center mb-6">
           <h1 className="text-3xl font-black text-white mb-2 tracking-tight">
             {isLogin ? 'Welcome Back' : 'Get Started'}
           </h1>
           <p className="text-slate-400 font-medium text-sm">
             {isLogin ? 'Continue your learning journey' : 'Join the smartest LMS in Ghana'}
           </p>
+        </div>
+
+        {/* 🚧 SOCIAL LOGIN (DISABLED MODE) */}
+        {/* These buttons are intentionally styled to look 'offline' */}
+        <div className="grid grid-cols-2 gap-3 mb-6">
+           <button 
+             type="button"
+             onClick={() => handleSocialClick('Google')}
+             className="group flex items-center justify-center gap-2 py-3 border border-white/10 bg-white/5 rounded-xl transition-all opacity-50 grayscale hover:opacity-100 hover:grayscale-0 hover:bg-white/10"
+           >
+             <img src="https://www.svgrepo.com/show/475656/google-color.svg" className="w-5 h-5 opacity-70 group-hover:opacity-100 transition-opacity" alt="Google" />
+             <span className="text-slate-400 text-xs font-bold group-hover:text-white">Google</span>
+           </button>
+           <button 
+             type="button"
+             onClick={() => handleSocialClick('Apple')}
+             className="group flex items-center justify-center gap-2 py-3 border border-white/10 bg-white/5 rounded-xl transition-all opacity-50 grayscale hover:opacity-100 hover:grayscale-0 hover:bg-white/10"
+           >
+             <img src="https://www.svgrepo.com/show/511330/apple-173.svg" className="w-5 h-5 opacity-70 group-hover:opacity-100 transition-opacity" alt="Apple" />
+             <span className="text-slate-400 text-xs font-bold group-hover:text-white">Apple</span>
+           </button>
+        </div>
+
+        <div className="relative mb-6">
+           <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-white/10"></div></div>
+           <div className="relative flex justify-center text-xs uppercase"><span className="bg-[#1a1b33] px-2 text-slate-500 font-bold rounded">Or continue with</span></div>
         </div>
 
         {/* Form */}
