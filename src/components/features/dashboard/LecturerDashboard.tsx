@@ -1,18 +1,18 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { UserProfile, Class } from '@/types';
+import { UserProfile, Course } from '@/types'; // Ensure 'Course' is imported
 import { 
   Plus, Users, BookOpen, BarChart3, Settings, 
-  ExternalLink, MoreVertical 
+  ExternalLink 
 } from 'lucide-react';
 
 interface LecturerDashboardProps {
   profile: UserProfile;
-  classes: Class[];
+  courses: any[]; // ✅ Renamed from 'classes' to 'courses'
 }
 
-export function LecturerDashboard({ profile, classes }: LecturerDashboardProps) {
+export function LecturerDashboard({ profile, courses }: LecturerDashboardProps) {
   const router = useRouter();
 
   return (
@@ -46,7 +46,7 @@ export function LecturerDashboard({ profile, classes }: LecturerDashboardProps) 
                <span className="text-sm font-bold text-slate-500">Total Students</span>
             </div>
             <p className="text-3xl font-black text-slate-900">
-               {classes.reduce((acc, c) => acc + (c._count?.students || 0), 0)}
+               {courses.reduce((acc, c) => acc + (c._count?.enrollments || 0), 0)}
             </p>
          </div>
          
@@ -55,7 +55,7 @@ export function LecturerDashboard({ profile, classes }: LecturerDashboardProps) 
                <div className="p-2 bg-emerald-50 text-emerald-700 rounded-lg"><BookOpen className="w-5 h-5"/></div>
                <span className="text-sm font-bold text-slate-500">Active Classes</span>
             </div>
-            <p className="text-3xl font-black text-slate-900">{classes.length}</p>
+            <p className="text-3xl font-black text-slate-900">{courses.length}</p>
          </div>
 
          <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
@@ -63,7 +63,7 @@ export function LecturerDashboard({ profile, classes }: LecturerDashboardProps) 
                <div className="p-2 bg-purple-50 text-purple-700 rounded-lg"><BarChart3 className="w-5 h-5"/></div>
                <span className="text-sm font-bold text-slate-500">Avg. Engagement</span>
             </div>
-            <p className="text-3xl font-black text-slate-900">84%</p>
+            <p className="text-3xl font-black text-slate-900">--%</p>
          </div>
       </div>
 
@@ -73,42 +73,44 @@ export function LecturerDashboard({ profile, classes }: LecturerDashboardProps) 
             <h3 className="font-bold text-slate-900">Active Classes</h3>
          </div>
          
-         {classes.length === 0 ? (
+         {courses.length === 0 ? (
             <div className="p-12 text-center">
                <p className="text-slate-400 text-sm italic">You haven't created any classes yet.</p>
             </div>
          ) : (
-            <table className="w-full text-left text-sm">
-               <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs border-b border-slate-200">
-                  <tr>
-                     <th className="px-6 py-3">Class Name</th>
-                     <th className="px-6 py-3">Code</th>
-                     <th className="px-6 py-3">Students</th>
-                     <th className="px-6 py-3">Created</th>
-                     <th className="px-6 py-3 text-right">Actions</th>
-                  </tr>
-               </thead>
-               <tbody className="divide-y divide-slate-100">
-                  {classes.map((cls) => (
-                     <tr key={cls.id} className="hover:bg-slate-50/50 transition">
-                        <td className="px-6 py-4 font-bold text-slate-900">{cls.name}</td>
-                        <td className="px-6 py-4">
-                           <span className="bg-slate-100 px-2 py-1 rounded font-mono text-xs text-slate-600">{cls.access_code}</span>
-                        </td>
-                        <td className="px-6 py-4 text-slate-600">{cls._count?.students || 0} Enrolled</td>
-                        <td className="px-6 py-4 text-slate-500">{new Date(cls.created_at).toLocaleDateString()}</td>
-                        <td className="px-6 py-4 text-right">
-                           <button 
-                             onClick={() => router.push(`/dashboard/class/${cls.id}`)}
-                             className="text-indigo-600 hover:text-indigo-800 font-bold text-xs inline-flex items-center gap-1"
-                           >
-                              Manage <ExternalLink className="w-3 h-3" />
-                           </button>
-                        </td>
-                     </tr>
-                  ))}
-               </tbody>
-            </table>
+            <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs border-b border-slate-200">
+                    <tr>
+                        <th className="px-6 py-3">Class Name</th>
+                        <th className="px-6 py-3">Code</th>
+                        <th className="px-6 py-3">Students</th>
+                        <th className="px-6 py-3">Created</th>
+                        <th className="px-6 py-3 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                    {courses.map((course) => (
+                        <tr key={course.id} className="hover:bg-slate-50/50 transition">
+                            <td className="px-6 py-4 font-bold text-slate-900">{course.title}</td>
+                            <td className="px-6 py-4">
+                                <span className="bg-slate-100 px-2 py-1 rounded font-mono text-xs text-slate-600">{course.code}</span>
+                            </td>
+                            <td className="px-6 py-4 text-slate-600">{course._count?.enrollments || 0} Enrolled</td>
+                            <td className="px-6 py-4 text-slate-500">{new Date(course.created_at).toLocaleDateString()}</td>
+                            <td className="px-6 py-4 text-right">
+                                <button 
+                                    onClick={() => router.push(`/dashboard/class/${course.id}`)}
+                                    className="text-indigo-600 hover:text-indigo-800 font-bold text-xs inline-flex items-center gap-1"
+                                >
+                                    Manage <ExternalLink className="w-3 h-3" />
+                                </button>
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+                </table>
+            </div>
          )}
       </div>
     </div>
