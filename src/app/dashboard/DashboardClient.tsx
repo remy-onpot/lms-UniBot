@@ -30,25 +30,31 @@ export default function DashboardClient({ user, initialProfile }: DashboardClien
       setShowWizard(true);
     }
 
-    // 2. Logic: Daily Login Bonus (Students Only)
-    if (profile.role === 'student') {
-      GamificationService.checkDailyLogin(user.id).then((updates: any) => {
-         if (updates) setProfile(prev => ({ ...prev, ...updates }));
-      });
-    }
-
-    // 3. Logic: Fetch Dashboard Data
-    const fetchData = async () => {
+    // 🚀 PERFORMANCE: Parallelize all async operations
+    const loadDashboard = async () => {
       try {
-        if (profile.role === 'student') {
-          // Student: Fetch Modules
-          const courses = await CourseService.getStudentCourses(user.id);
-          setData(courses || []);
+        // Run all async operations in parallel
+        const [dashboardData, dailyLoginUpdates] = await Promise.allSettled([
+          // Fetch Dashboard Data
+          profile.role === 'student'
+            ? CourseService.getStudentCourses(user.id)
+            : ClassService.getDashboardClasses(user.id, profile.role, profile.is_course_rep),
+          // Daily Login Bonus (Students Only) - non-blocking
+          profile.role === 'student'
+            ? GamificationService.checkDailyLogin(user.id)
+            : Promise.resolve(null)
+        ]);
+
+        // Handle dashboard data
+        if (dashboardData.status === 'fulfilled') {
+          setData(dashboardData.value || []);
         } else {
-          // Lecturer: Fetch Classes (SaaS + Cohort)
-          // We pass 'true' for isRep if they are a rep, though lecturers usually aren't.
-          const classes = await ClassService.getDashboardClasses(user.id, profile.role, profile.is_course_rep);
-          setData(classes || []);
+          console.error("Dashboard Load Error:", dashboardData.reason);
+        }
+
+        // Handle daily login updates
+        if (dailyLoginUpdates.status === 'fulfilled' && dailyLoginUpdates.value) {
+          setProfile(prev => ({ ...prev, ...dailyLoginUpdates.value }));
         }
       } catch (e) {
         console.error("Dashboard Load Error:", e);
@@ -57,7 +63,7 @@ export default function DashboardClient({ user, initialProfile }: DashboardClien
       }
     };
 
-    fetchData();
+    loadDashboard();
   }, [user.id, profile.role, profile.is_course_rep]);
 
   if (loading) return <DashboardSkeleton />;

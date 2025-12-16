@@ -72,7 +72,7 @@ export const ClassService = {
       .from('class_enrollments')
       .select(`
         created_at,
-        users:student_id (
+        users:student_id_code (
           id, full_name, email, avatar_url
         )
       `)

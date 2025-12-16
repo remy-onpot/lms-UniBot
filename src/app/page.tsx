@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { UniBotFace } from '@/components/ui/UniBotFace'; // ✅ Brand Identity
+import { UniBotMascot } from '@/components/ui/UniBotMascot'; // ✅ Brand Identity
 import { 
   BookOpen, Brain, Zap, CheckCircle, BarChart, Layers 
 } from 'lucide-react';
@@ -57,7 +57,7 @@ export default function LandingPage() {
           <div className="flex justify-between items-center h-16 sm:h-20">
             <div className="flex items-center gap-3">
               {/* ✅ Brand Logo */}
-              <UniBotFace size="sm" />
+              <UniBotMascot size={40} emotion="happy" action="none" />
               <span className="text-xl font-black text-slate-900 tracking-tight">UniBot</span>
             </div>
             
@@ -118,7 +118,7 @@ export default function LandingPage() {
                 
                 {/* ✅ The Hero Character */}
                 <div className="relative z-10 w-80 h-80 transition-transform duration-700 hover:scale-105 hover:rotate-3">
-                   <UniBotFace size="xl" className="w-full h-full shadow-2xl border-8 border-white" />
+                   <UniBotMascot size={320} emotion="happy" action="wave" className="w-full h-full shadow-2xl border-8 border-white" />
                    
                    {/* Floating UI Elements (Decor) */}
                    <div className="absolute -left-12 top-20 bg-white p-4 rounded-2xl shadow-xl border border-slate-100 animate-bounce delay-100">
@@ -178,7 +178,7 @@ export default function LandingPage() {
       {/* Footer */}
       <footer className="py-12 px-4 border-t border-slate-200 bg-slate-50">
         <div className="max-w-7xl mx-auto text-center flex flex-col items-center">
-          <UniBotFace size="sm" className="mb-4 grayscale opacity-50" />
+          <UniBotMascot size={40} emotion="idle" action="none" className="mb-4 grayscale opacity-50" />
           <p className="text-slate-500 font-medium">
             © 2024 UniBot LMS. Built for students, by students.
           </p>
