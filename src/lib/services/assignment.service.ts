@@ -1,9 +1,16 @@
-import { supabase } from '../supabase';
-import { Assignment, AssignmentSubmission } from '../../types';
+import { supabase } from '@/lib/supabase'; // Adjusted path to match your project structure
+import { Assignment, AssignmentSubmission } from '@/types'; // Adjusted path
 
 export const AssignmentService = {
   
-  async create(courseId: string, data: { title: string; description: string; total_points: number; due_date: string }) {
+  // ✅ FIX: Added 'grading_config' to the type definition here
+  async create(courseId: string, data: { 
+    title: string; 
+    description: string; 
+    total_points: number; 
+    due_date: string;
+    grading_config?: any; // <--- This was missing!
+  }) {
     const { error } = await supabase.from('assignments').insert([{
       course_id: courseId,
       ...data
@@ -47,7 +54,6 @@ export const AssignmentService = {
     return data;
   },
 
-  // ✅ UPDATED: Fetches university_id for the Export
   async getSubmissions(assignmentId: string) {
     const { data, error } = await supabase
       .from('assignment_submissions')
@@ -58,9 +64,7 @@ export const AssignmentService = {
     return data as AssignmentSubmission[];
   },
 
-  // ✅ NEW: Fetches Matrix Data for Excel Export
   async getCourseGradebook(courseId: string) {
-    // 1. Get all assignments
     const { data: assignments } = await supabase
       .from('assignments')
       .select('id, title, total_points')
@@ -69,7 +73,6 @@ export const AssignmentService = {
 
     if (!assignments || assignments.length === 0) return { assignments: [], submissions: [] };
 
-    // 2. Get all submissions for these assignments
     const { data: submissions } = await supabase
       .from('assignment_submissions')
       .select(`

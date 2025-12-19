@@ -159,7 +159,7 @@ export function OverviewTab({
              ) : (
                <div className="space-y-3">
                   {recentBadges.map((ach) => {
-                    const Icon = IconMap[ach.icon_name] || Trophy;
+                    const Icon = IconMap[ach.icon] || Trophy;
                     return (
                       <div key={ach.id} className="flex items-center gap-3 p-3 bg-yellow-50/50 rounded-xl border border-yellow-100 hover:border-yellow-200 transition">
                          <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center text-xl shadow-sm text-yellow-600">

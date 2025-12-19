@@ -32,23 +32,25 @@ export const UserProfileSchema = z.object({
   subscription_status: z.enum(['active', 'inactive', 'past_due']).default('inactive'),
   subscription_end_date: z.string().datetime().optional().nullable(),
   is_course_rep: z.boolean().default(false),
-  university_id: z.string().uuid().optional().nullable(), // Corrected type to UUID/null
+  university_id: z.string().uuid().optional().nullable(),
+  custom_university: z.string().optional().nullable(),
   onboarding_completed: z.boolean().default(false),
 
   // Gamification (Cached DB values)
   xp: z.number().default(0),
   gems: z.number().default(0),
   current_streak: z.number().default(0),
-  // Removed redundant longest_streak, streak_freezes
-  last_activity_date: z.string().datetime().optional(),
-  last_login_date: z.string().datetime().optional(),
+  last_activity_date: z.string().datetime().optional().nullable(),
+  last_login_date: z.string().datetime().optional().nullable(),
   
   // Profile
   bio: z.string().optional().nullable(),
   interests: z.array(z.string()).optional(),
   phone_number: z.string().optional().nullable(),
   profile_frame: z.string().default('default'),
-  owned_frames: z.array(z.string()).default(['default']),
+  department: z.string().optional().nullable(),
+  student_id_code: z.string().optional().nullable(),
+  // NOTE: owned_frames removed - compute from user_inventory table instead
   achievements: z.array(z.custom<Achievement>()).optional(), 
 });
 
@@ -145,7 +147,7 @@ export interface Quiz {
 export interface QuizResult {
   id: string;
   quiz_id: string;
-  student_id: string;
+  student_id_code: string;
   score: number;
   total_questions: number;
   correct_answers: number;
@@ -186,7 +188,7 @@ export interface Assignment {
 export const AssignmentSubmissionSchema = z.object({
   id: z.string().uuid(),
   assignment_id: z.string().uuid(),
-  student_id: z.string().uuid(),
+  student_id_code: z.string().uuid(),
   content_text: z.string().optional().nullable(),
   file_url: z.string().url().optional().nullable(),
   
@@ -245,10 +247,12 @@ export interface AIGeneratedQuestion {
 
 export interface Achievement {
   id: string;
-  title: string;
+  name: string;  // Matches DB column 'name', not 'title'
   description: string;
+  xp_reward: number;
+  criteria?: Record<string, unknown>;
   icon: string;
-  unlocked_at?: string;
+  earned_at?: string;  // From user_achievements join
 }
 
 export interface StreakUpdate {
@@ -266,15 +270,18 @@ export interface FrameItem {
   cssClass: string; 
 }
 
-/** * FINAL SHOP ITEM EXPORT: Fixes the 'no exported member ShopItem' error.
+/** 
+ * FINAL SHOP ITEM EXPORT: Matches DB schema shop_items table.
  */
 export interface ShopItem {
   id: string;
   name: string;
   description?: string;
   cost: number;
-  category: 'frame' | 'badge' | 'theme';
+  type: 'frame' | 'accessory' | 'theme' | 'badge';  // Matches DB 'type' column
   asset_value: string;
+  metadata?: Record<string, unknown>;
+  is_active?: boolean;
 }
 
 /** * FINAL ANNOUNCEMENT EXPORT: Fixes the 'no exported member Announcement' error.
@@ -295,7 +302,7 @@ export interface Announcement {
  */
 export const ClassEnrollmentSchema = z.object({
   id: z.string().uuid(),
-  student_id: z.string().uuid(),
+  student_id_code: z.string().uuid(),
   class_id: z.string().uuid(),
   joined_at: z.string().datetime(),
   

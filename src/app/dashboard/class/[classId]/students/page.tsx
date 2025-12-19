@@ -11,6 +11,26 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/badge'; 
 import { toast } from 'sonner';
 
+// Define types to stop TypeScript errors
+interface StudentProfile {
+  id: string;
+  full_name: string;
+  email: string;
+  avatar_url?: string;
+  phone_number?: string;
+  student_id_code?: string;
+}
+
+interface Enrollment {
+  id: string;
+  joined_at: string;
+  has_paid: boolean;
+  student_id: string;
+  student: StudentProfile | StudentProfile[]; // Can be object or array
+  access_type?: string;
+  targetId?: string; // Helper for logic
+}
+
 export default function ClassStudentsPage() {
   const params = useParams();
   const router = useRouter();
@@ -40,39 +60,59 @@ export default function ClassStudentsPage() {
       if (classError) throw classError;
       setClassData(cls);
 
-      // 2. Fetch ALL enrolled students from class_enrollments
-      const { data: enrollments, error: rosterError } = await supabase
+      // 2. Fetch ALL enrolled students
+      // We remove the '!student_id_code' hint to fix the PGRST200 error
+      const { data: rawData, error: rosterError } = await supabase
         .from('class_enrollments')
         .select(`
           id,
-          joined_at,
+          joined_at:created_at, 
           has_paid,
-          student_id,
-          student:users!student_id (
-            id, full_name, email, student_id, phone_number, avatar_url
+          student_id, 
+          student:users (
+            id, full_name, email, student_id_code, phone_number, avatar_url
           )
         `)
         .eq('class_id', classId)
-        .order('joined_at', { ascending: false });
+        .order('created_at', { ascending: false });
 
       if (rosterError) throw rosterError;
 
-      // 3. Check who has premium course access (paid students)
-      const studentIds = enrollments?.map(e => e.student_id) || [];
-      const { data: paidAccess } = await supabase
-        .from('student_course_access')
-        .select('student_id, access_type')
-        .eq('class_id', classId)
-        .in('student_id', studentIds);
+      const enrollments = rawData as unknown as Enrollment[];
 
-      // 4. Merge payment data
-      const paidMap = new Map(paidAccess?.map(p => [p.student_id, p.access_type]));
+      // 3. SAFE UNWRAP (Fixes the "Property id does not exist on type []" error)
+      const safeEnrollments = enrollments?.map(e => {
+        // Check if 'student' is an array (list) or an object
+        const studentObj = Array.isArray(e.student) ? e.student[0] : e.student;
+        
+        if (!studentObj) return null; // Skip if user data is missing/deleted
+
+        return {
+            ...e,
+            student: studentObj, // Save it as a clean object
+            targetId: studentObj.id
+        };
+      }).filter(Boolean) || [];
+
+      // 4. Check Payment Status
+      let paidMap = new Map();
+      if (safeEnrollments.length > 0) {
+         const studentIds = safeEnrollments.map((e: any) => e.targetId);
+         
+         const { data: paidAccess } = await supabase
+            .from('student_course_access')
+            .select('student_id_code, access_type')
+            .eq('class_id', classId)
+            .in('student_id_code', studentIds); 
+
+         paidMap = new Map(paidAccess?.map(p => [p.student_id_code, p.access_type]));
+      }
       
-      const processedStudents = enrollments?.map(e => ({
+      // 5. Final Merge
+      const processedStudents = safeEnrollments.map((e: any) => ({
         ...e,
-        created_at: e.joined_at,
-        access_type: paidMap.get(e.student_id) || (e.has_paid ? 'semester_bundle' : 'trial')
-      })) || [];
+        access_type: paidMap.get(e.targetId) || (e.has_paid ? 'semester_bundle' : 'trial')
+      }));
 
       setStudents(processedStudents);
 
@@ -87,7 +127,7 @@ export default function ClassStudentsPage() {
   // Filter Logic
   const filteredStudents = students.filter(s => 
     s.student?.full_name?.toLowerCase().includes(search.toLowerCase()) ||
-    s.student?.student_id?.includes(search) ||
+    s.student?.student_id_code?.includes(search) ||
     s.student?.email?.toLowerCase().includes(search)
   );
 
@@ -188,7 +228,7 @@ export default function ClassStudentsPage() {
                     {/* ID Badge */}
                     <td className="px-6 py-4">
                       <span className="font-mono text-xs font-bold text-slate-600 bg-slate-100 px-2 py-1 rounded">
-                        {row.student?.student_id || 'N/A'}
+                        {row.student?.student_id_code || 'N/A'}
                       </span>
                     </td>
 
@@ -205,11 +245,11 @@ export default function ClassStudentsPage() {
                     {/* Payment Status */}
                     <td className="px-6 py-4">
                       {row.access_type === 'semester_bundle' ? (
-                        <Badge variant="success" className="gap-1">
+                        <Badge variant="success" className="gap-1 bg-green-100 text-green-700 hover:bg-green-100">
                           <Crown className="w-3 h-3 fill-green-700" /> Paid
                         </Badge>
                       ) : (
-                        <Badge variant="warning" className="gap-1">
+                        <Badge variant="warning" className="gap-1 bg-yellow-100 text-yellow-700 hover:bg-yellow-100">
                           <ShieldAlert className="w-3 h-3" /> Trial
                         </Badge>
                       )}
@@ -219,7 +259,7 @@ export default function ClassStudentsPage() {
                     <td className="px-6 py-4 text-right text-slate-400 text-xs font-medium">
                       <div className="flex items-center justify-end gap-1">
                         <Calendar className="w-3 h-3" />
-                        {new Date(row.created_at).toLocaleDateString()}
+                        {new Date(row.joined_at || row.created_at).toLocaleDateString()}
                       </div>
                     </td>
                   </tr>

@@ -10,7 +10,7 @@ import {
 import { GamificationService, Achievement } from '@/lib/services/gamification.service';
 import { UserProfile } from '@/types';
 import { Button } from '@/components/ui/Button';
-import { UniBotFace } from '@/components/ui/UniBotFace';
+// UniBotFace removed - using UniBotMascot instead
 import { useFace } from '@/components/ui/FaceProvider';
 
 // Feature Components

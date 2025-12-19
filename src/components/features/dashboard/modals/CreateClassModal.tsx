@@ -13,9 +13,9 @@ interface CreateClassModalProps {
 
 export default function CreateClassModal({ onClose, onSubmit, loading, data, onChange }: CreateClassModalProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="create-class-title">
-      <FocusTrap focusTrapOptions={{ initialFocus: '#class-name-input', onDeactivate: onClose, clickOutsideDeactivates: true }}>
-        <div className="bg-white p-8 rounded-3xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="create-class-title" onClick={onClose}>
+      <FocusTrap focusTrapOptions={{ initialFocus: '#class-name-input', clickOutsideDeactivates: false, allowOutsideClick: true }}>
+        <div className="bg-white p-8 rounded-3xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
           <h2 id="create-class-title" className="text-2xl font-bold mb-1 text-slate-900">Create Class</h2>
           <p className="text-slate-500 text-sm mb-6">Set up a new space for your students.</p>
           <form onSubmit={onSubmit} className="space-y-4">

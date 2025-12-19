@@ -2,7 +2,6 @@
 import { useRef, useEffect, useState } from 'react';
 import { Send, Paperclip, X, Sparkles, User } from 'lucide-react';
 import { UniBotMascot } from '@/components/ui/UniBotMascot';
-import { UniBotFace } from '@/components/ui/UniBotFace'; // Assuming you have this
 import { cn } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
 
@@ -81,7 +80,7 @@ export function ChatWindow({
             
             {/* Avatar */}
             <div className={cn("w-8 h-8 rounded-full flex items-center justify-center shrink-0 border mt-auto mb-1", msg.role === 'user' ? "bg-slate-900 border-slate-900" : "bg-white border-indigo-100 shadow-sm")}>
-              {msg.role === 'user' ? <User className="w-4 h-4 text-white" /> : <UniBotFace size="xs" state="happy" />}
+              {msg.role === 'user' ? <User className="w-4 h-4 text-white" /> : <UniBotMascot size={32} emotion="happy" action="none" />}
             </div>
             
             {/* Bubble */}
@@ -110,7 +109,7 @@ export function ChatWindow({
         {isLoading && (
           <div className="flex items-center gap-3 mr-auto max-w-[80%] animate-pulse">
              <div className="w-8 h-8 bg-white border border-indigo-100 rounded-full flex items-center justify-center shadow-sm">
-                <UniBotFace size="xs" state="thinking" />
+                <UniBotMascot size={32} emotion="thinking" action="none" />
              </div>
              <div className="bg-white px-4 py-3 rounded-2xl rounded-bl-sm border border-slate-100 shadow-sm">
                 <div className="flex gap-1">

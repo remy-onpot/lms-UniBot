@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { UniBotFace } from '@/components/ui/UniBotFace';
+import { UniBotMascot } from '@/components/ui/UniBotMascot';
 
 export default function NotFound() {
   return (
@@ -7,7 +7,7 @@ export default function NotFound() {
       <div className="relative z-10 bg-white p-12 rounded-[2.5rem] shadow-xl max-w-md w-full border border-slate-100">
         <div className="mx-auto mb-8 flex justify-center">
            {/* ✅ Confused Robot */}
-           <UniBotFace size="xl" state="thinking" className="rotate-12" />
+           <UniBotMascot size={128} emotion="thinking" action="none" className="rotate-12" />
         </div>
         
         <h1 className="text-4xl font-black text-slate-900 mb-2">Wrong Turn?</h1>

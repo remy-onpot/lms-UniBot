@@ -1,5 +1,8 @@
 import { supabase } from '../supabase';
 import { ShopItem, Achievement } from '../../types';
+
+// Re-export Achievement for components that import from this service
+export type { Achievement };
 import { subDays, format, startOfDay } from 'date-fns';
 
 // 1. Constants: Centralized XP Rates

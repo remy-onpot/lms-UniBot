@@ -1,17 +1,39 @@
-// src/middleware.ts (FINAL, SECURE, LOOP-FREE REWRITE)
+// src/middleware.ts
 
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+// 🚀 CONFIGURATION
+const AUTH_TIMEOUT_MS = 2500; // 2.5s max wait time for auth
+const PROTECTED_PATHS = [
+  '/dashboard',
+  '/super-admin',
+  '/ai-assistant',
+];
+
 export async function middleware(request: NextRequest) {
-  // 1. Initialize the response object that will carry the refreshed cookies
+  const path = request.nextUrl.pathname;
+
+  // 1. 🚀 PERFORMANCE: Early exit for static assets
+  // This prevents the middleware from running heavy logic on images/fonts
+  if (
+    path.startsWith('/_next') ||
+    path.startsWith('/api/auth') || // Let auth endpoints handle themselves
+    path.startsWith('/api/payment/webhook') || // Webhooks usually need raw body/signature, handle elsewhere
+    path.match(/\.(ico|png|jpg|jpeg|svg|gif|webp|pdf|woff|woff2|ttf|eot|json|xml|txt|css|js)$/i)
+  ) {
+    return NextResponse.next();
+  }
+
+  // 2. Initialize the response
+  // We start with the request headers to preserve the chain
   let response = NextResponse.next({
     request: {
       headers: request.headers,
     },
   })
 
-  // 2. Create the Supabase client (Session Refresh happens here)
+  // 3. Supabase Client Setup (The "Split-Brain" Fix)
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -20,10 +42,18 @@ export async function middleware(request: NextRequest) {
         getAll() {
           return request.cookies.getAll()
         },
-        /** * 🏆 CRITICAL FIX: Set the refreshed session tokens directly on 
-         * the response object, ensuring they are sent back to the client.
-         */
         setAll(cookiesToSet) {
+          // A. Update the REQUEST cookies (So Server Components see the new session NOW)
+          cookiesToSet.forEach(({ name, value }) => 
+            request.cookies.set(name, value)
+          )
+          
+          // B. Update the RESPONSE object (So we don't lose the changes)
+          response = NextResponse.next({
+            request,
+          })
+          
+          // C. Set the RESPONSE cookies (So the Browser sees the new session LATER)
           cookiesToSet.forEach(({ name, value, options }) =>
             response.cookies.set(name, value, options)
           )
@@ -32,51 +62,97 @@ export async function middleware(request: NextRequest) {
     }
   )
 
-  const { data: { user } } = await supabase.auth.getUser()
-  const path = request.nextUrl.pathname;
+  // 4. 🛡️ AUTH CHECK: Fail-closed with Timeout
+  // We use getUser() to validate the JWT against the database (security over speed)
+  let user = null;
+  
+  try {
+    // Create a timeout promise to prevent hanging requests
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Auth timeout')), AUTH_TIMEOUT_MS)
+    );
 
-  // 🛡️ SECURITY CONFIGURATION
+    // Race the auth check against the clock
+    const { data: { user: authUser }, error } = await Promise.race([
+      supabase.auth.getUser(),
+      timeoutPromise
+    ]) as any; // Casting to avoid complex Promise.race typing issues
+
+    if (error) throw error;
+    user = authUser;
+
+  } catch (error) {
+    // 🔍 LOGGING: Production monitoring
+    if (process.env.NODE_ENV === 'production') {
+       // Only log critical failures, not standard "no session" errors
+       const msg = error instanceof Error ? error.message : 'Unknown';
+       if (msg === 'Auth timeout') {
+         console.error(`[Middleware] ⚠️ Auth Timeout on ${path}`);
+       }
+    }
+  }
+
+  // 5. 🛡️ ROUTE PROTECTION LOGIC
+  
+  // Helper: Is this a protected route?
   const isProtectedRoute = 
-    path.startsWith('/dashboard') || 
-    path.startsWith('/super-admin') ||
-    path.startsWith('/ai-assistant') ||
-    // Protect API routes
-    (path.startsWith('/api/') && !path.startsWith('/api/auth') && !path.startsWith('/api/payment/webhook'));
+    PROTECTED_PATHS.some(prefix => path.startsWith(prefix)) ||
+    (path.startsWith('/api/') && !path.startsWith('/api/auth') && !path.startsWith('/api/public'));
 
-  // Define paths that are ONLY for guests (Login, Sign-Up). 
-  // ✅ FIX: Exclude /auth/callback to prevent the loop after successful exchange.
+  // Helper: Is this an Auth route (Login/Signup)?
+  // Exclude /auth/callback to prevent loops during OAuth exchange
   const isAuthRoute = 
-    (path.startsWith('/login') || path.startsWith('/auth')) && 
+    (path.startsWith('/login') || path.startsWith('/register') || path.startsWith('/auth')) && 
     !path.startsWith('/auth/callback');
 
-  // 3. LOGIC: Redirect Unauthenticated Users (Accessing protected resources)
+
+  // A. REDIRECT: Unauthenticated User accessing Protected Route
   if (isProtectedRoute && !user) {
-    // If it's an API call, return 401 JSON
+    // API Route: Return 401 JSON
     if (path.startsWith('/api/')) {
-        return NextResponse.json(
-            { error: 'Unauthorized: Please log in first.' }, 
-            { status: 401 }
-        );
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    // If it's a Page request, redirect to Login
-    const redirectUrl = new URL('/login', request.url);
-    redirectUrl.searchParams.set('next', path); 
-    return NextResponse.redirect(redirectUrl);
+    
+    // Page Route: Redirect to Login
+    const url = new URL('/login', request.url);
+    url.searchParams.set('next', path); // Remember where they wanted to go
+    return redirectWithCookies(url, response);
   }
 
-  // 4. LOGIC: Redirect Authenticated Users (Accessing guest-only routes)
+  // B. REDIRECT: Authenticated User accessing Guest Route
   if (isAuthRoute && user) {
-    // If they are already logged in and try to hit /login, send them to /dashboard
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+    const url = new URL('/dashboard', request.url);
+    return redirectWithCookies(url, response);
   }
 
-  // 5. Return the response, containing the refreshed cookies (if any)
-  return response
+  // 6. 🛡️ SECURITY HEADERS (Production Best Practice)
+  // Add basic security headers to every response
+  response.headers.set('x-frame-options', 'DENY'); // Prevent clickjacking
+  response.headers.set('x-content-type-options', 'nosniff'); // Prevent MIME sniffing
+
+  return response;
+}
+
+/**
+ * 🛠️ HELPER: Redirect while preserving cookies
+ * Crucial! If we refreshed a token above, a standard NextResponse.redirect()
+ * would discard the new cookies, causing an infinite loop.
+ */
+function redirectWithCookies(url: URL, sourceResponse: NextResponse) {
+  const newResponse = NextResponse.redirect(url);
+  
+  // Copy cookies from the source response (which might contain a refreshed token)
+  const cookiesToSet = sourceResponse.cookies.getAll();
+  cookiesToSet.forEach((cookie) => {
+    newResponse.cookies.set(cookie.name, cookie.value, cookie);
+  });
+  
+  return newResponse;
 }
 
 export const config = {
+  // Matcher ignores static files to save resources
   matcher: [
-    /* Match all paths except static assets */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|pdf)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

@@ -100,6 +100,7 @@ export default function CreateClassPage() {
         .from('classes')
         .insert([{
           name: formData.name,
+          owner_id: user.id,
           lecturer_id: user.id,
           access_code: formData.access_code,
           type: classType,

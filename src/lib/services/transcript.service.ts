@@ -43,20 +43,28 @@ export const TranscriptService = {
 
       for (const course of courses) {
         // 3. Calculate Quiz Scores (Average)
+        // NOTE: quiz_results has course_id column for direct filtering
         const { data: quizzes } = await supabase
           .from('quiz_results')
-          .select('score, total_score') // Assuming 'score' is percentage or raw
+          .select('score, total_questions') // Correct column names per schema
           .eq('student_id', studentId)
-          // We need to join quizzes to filter by course_id, or assume quiz_results has course_id
-          // Optimization: Add course_id to quiz_results for fast reporting
-          .eq('quiz_id', course.id); // *Logic adjustment needed if schema differs
+          .eq('course_id', course.id);
 
         // 4. Calculate Assignment Scores
-        const { data: assignments } = await supabase
-          .from('assignment_submissions')
-          .select('score') // Assuming score is out of 100
-          .eq('student_id', studentId)
-          .eq('assignment_id', course.id); // *Logic adjustment needed
+        // Need to join through assignments to get course-specific submissions
+        const { data: courseAssignments } = await supabase
+          .from('assignments')
+          .select('id')
+          .eq('course_id', course.id);
+          
+        const assignmentIds = courseAssignments?.map(a => a.id) || [];
+        const { data: assignments } = assignmentIds.length > 0 
+          ? await supabase
+              .from('assignment_submissions')
+              .select('score')
+              .eq('student_id', studentId)
+              .in('assignment_id', assignmentIds)
+          : { data: [] };
 
         // --- SIMULATED CALCULATION (Since we need deeper joins) ---
         // In a real production app, we would use a SQL View for this.

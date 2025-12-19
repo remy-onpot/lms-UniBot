@@ -5,8 +5,10 @@ import { UserProfile } from '@/types';
 import { UniBotMascot, MascotEmotion, MascotAction } from '@/components/ui/UniBotMascot';
 import { 
   BookOpen, Trophy, Clock, ArrowRight, ShoppingBag, 
-  Sparkles, Target, CreditCard, Flame 
+  Sparkles, Target, CreditCard, Flame, Plus, X 
 } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+import { toast } from 'sonner';
 
 interface StudentDashboardProps {
   profile: UserProfile;
@@ -22,6 +24,11 @@ export function StudentDashboard({ profile, courses }: StudentDashboardProps) {
   const [emotion, setEmotion] = useState<MascotEmotion>('idle');
   const [action, setAction] = useState<MascotAction>('wave');
   const idleTimer = useRef<NodeJS.Timeout | null>(null);
+
+  // 🆕 JOIN CLASS STATE
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [accessCode, setAccessCode] = useState('');
+  const [joiningClass, setJoiningClass] = useState(false);
 
   useEffect(() => {
     const hour = new Date().getHours();
@@ -80,6 +87,86 @@ export function StudentDashboard({ profile, courses }: StudentDashboardProps) {
   const displayCourses = filter === 'all' 
     ? courses 
     : courses.filter(c => c.quizCount > 0 || c.assignmentCount > 0);
+
+  // 🆕 JOIN CLASS HANDLER
+  const handleJoinClass = async () => {
+    if (!accessCode.trim()) {
+      return toast.error('Please enter an access code');
+    }
+
+    setJoiningClass(true);
+    try {
+      // 1. Find class by access code
+      const { data: classData, error: classError } = await supabase
+        .from('classes')
+        .select('id, name, requires_approval, owner_id')
+        .eq('access_code', accessCode.trim().toUpperCase())
+        .eq('status', 'active')
+        .single();
+
+      if (classError || !classData) {
+        toast.error('Invalid or expired access code');
+        setJoiningClass(false);
+        return;
+      }
+
+      // 2. Check if already enrolled
+      const { data: existing } = await supabase
+        .from('class_enrollments')
+        .select('id, status')
+        .eq('class_id', classData.id)
+        .eq('student_id_code', profile.id)
+        .maybeSingle(); // Use maybeSingle() instead of single() to handle 0 rows gracefully
+
+      if (existing) {
+        if (existing.status === 'approved') {
+          toast.error('You are already enrolled in this class');
+        } else if (existing.status === 'pending') {
+          toast.info('Your enrollment is pending approval');
+        }
+        setJoiningClass(false);
+        setShowJoinModal(false);
+        return;
+      }
+
+      // 3. Enroll student
+      const status = classData.requires_approval ? 'pending' : 'approved';
+      const { error: enrollError } = await supabase
+        .from('class_enrollments')
+        .insert({
+          class_id: classData.id,
+          student_id_code: profile.id,
+          status,
+          role: 'student',
+          access_type: 'trial'
+        });
+
+      if (enrollError) {
+        console.error('Enrollment error:', enrollError);
+        toast.error('Failed to join class. Please try again.');
+        setJoiningClass(false);
+        return;
+      }
+
+      // Success!
+      if (status === 'pending') {
+        toast.success(`Request sent! Awaiting approval for "${classData.name}"`);
+      } else {
+        toast.success(`🎉 Successfully joined "${classData.name}"!`);
+      }
+
+      setAccessCode('');
+      setShowJoinModal(false);
+      setJoiningClass(false);
+
+      // Refresh page to show new class
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (error: any) {
+      console.error('Join class error:', error);
+      toast.error('Something went wrong. Please try again.');
+      setJoiningClass(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans pb-24 md:pb-12">
@@ -190,6 +277,14 @@ export function StudentDashboard({ profile, courses }: StudentDashboardProps) {
               
               <div className="flex flex-wrap items-center gap-3">
                  <button 
+                   onClick={() => setShowJoinModal(true)}
+                   className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 transition active:scale-95 shadow-sm"
+                 >
+                    <Plus className="w-3.5 h-3.5" />
+                    Join Class
+                 </button>
+
+                 <button 
                    onClick={() => router.push('/dashboard/student-billing')}
                    className="flex items-center gap-2 px-4 py-2 bg-amber-50 text-amber-700 text-xs font-bold rounded-xl border border-amber-200 hover:bg-amber-100 transition active:scale-95"
                  >
@@ -243,6 +338,72 @@ export function StudentDashboard({ profile, courses }: StudentDashboardProps) {
            )}
         </div>
       </div>
+
+      {/* 🆕 JOIN CLASS MODAL */}
+      {showJoinModal && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in"
+          onClick={() => !joiningClass && setShowJoinModal(false)}
+        >
+          <div 
+            className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl animate-in slide-in-from-bottom-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-2xl font-black text-slate-900">Join a Class</h3>
+              <button 
+                onClick={() => setShowJoinModal(false)}
+                disabled={joiningClass}
+                className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 transition disabled:opacity-50"
+              >
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+
+            {/* Access Code Input */}
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-bold text-slate-700 mb-2 block">
+                  Access Code
+                </label>
+                <input
+                  type="text"
+                  value={accessCode}
+                  onChange={(e) => setAccessCode(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => e.key === 'Enter' && !joiningClass && handleJoinClass()}
+                  placeholder="e.g. CS-1234"
+                  disabled={joiningClass}
+                  className="w-full h-14 px-4 text-center text-lg font-mono font-bold tracking-widest uppercase bg-slate-50 border-2 border-slate-200 rounded-xl focus:border-indigo-500 focus:bg-white outline-none transition disabled:opacity-50"
+                  maxLength={20}
+                  autoFocus
+                />
+                <p className="text-xs text-slate-500 mt-2 px-1">
+                  Enter the code provided by your class representative or lecturer
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setShowJoinModal(false)}
+                  disabled={joiningClass}
+                  className="flex-1 h-12 px-4 rounded-xl border-2 border-slate-200 text-slate-700 font-bold hover:bg-slate-50 transition disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleJoinClass}
+                  disabled={joiningClass || !accessCode.trim()}
+                  className="flex-1 h-12 px-4 rounded-xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {joiningClass ? 'Joining...' : 'Join Class'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

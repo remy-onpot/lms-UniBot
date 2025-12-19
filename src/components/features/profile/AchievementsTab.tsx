@@ -91,7 +91,7 @@ export function AchievementsTab({ achievements, onRefresh }: AchievementsTabProp
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
         {achievements.map((ach) => {
           const isUnlocked = !!ach.earned_at;
-          const Icon = IconMap[ach.icon_name] || Trophy;
+          const Icon = IconMap[ach.icon] || Trophy;
 
           return (
             <div 

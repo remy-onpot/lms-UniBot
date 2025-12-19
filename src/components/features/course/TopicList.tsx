@@ -1,12 +1,18 @@
 'use client';
 
 import { useState } from 'react';
+import dynamic from 'next/dynamic';
 import { 
   ChevronDown, ChevronUp, BookOpen, Trash2, Sparkles, Lock, FileText, X
 } from 'lucide-react';
  import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/Button';
-import { PDFViewer } from '@/components/features/chat/PDFViewer'; // ✅ Import Viewer
+
+// Lazy load PDFViewer (heavy component with react-pdf)
+const PDFViewer = dynamic(() => import('@/components/features/chat/PDFViewer').then(mod => ({ default: mod.PDFViewer })), {
+  loading: () => <div className="h-full flex items-center justify-center bg-slate-50 text-slate-400 text-sm">Loading PDF viewer...</div>,
+  ssr: false
+});
 
 interface Topic {
   id: string;

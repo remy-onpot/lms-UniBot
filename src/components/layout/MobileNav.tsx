@@ -11,7 +11,8 @@ interface MobileNavProps {
 export function MobileNav({ role }: MobileNavProps) {
   const pathname = usePathname();
   const isLecturer = role === 'lecturer' || role === 'super_admin';
-  const profileLink = isLecturer ? '/dashboard/lecturer-profile' : '/dashboard/profile';
+  // Profile settings page is the same for all roles
+  const profileLink = '/dashboard/profile';
 
   // Exact match for dashboard to prevent it lighting up on sub-pages unnecessarily
   const isActive = (path: string) => {

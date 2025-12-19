@@ -13,6 +13,7 @@ export default function ShopPage() {
   const face = useFace();
   const [items, setItems] = useState<ShopItem[]>([]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [ownedItemIds, setOwnedItemIds] = useState<Set<string>>(new Set(['default']));
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -20,8 +21,19 @@ export default function ShopPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return router.push('/login');
       
+      // Fetch user profile
       const { data } = await supabase.from('users').select('*').eq('id', user.id).single();
       setProfile(data);
+      
+      // Fetch owned items from user_inventory (normalized approach)
+      const { data: inventory } = await supabase
+        .from('user_inventory')
+        .select('item_id')
+        .eq('user_id', user.id);
+      
+      const ownedIds = new Set<string>(['default']); // Default is always owned
+      inventory?.forEach(inv => ownedIds.add(inv.item_id));
+      setOwnedItemIds(ownedIds);
       
       const shopItems = await GamificationService.getShopItems();
       setItems(shopItems || []);
@@ -34,7 +46,9 @@ export default function ShopPage() {
     if (!profile) return;
     try {
       const res = await GamificationService.buyItem(profile.id, item.id);
-      setProfile({ ...profile, gems: res.newGems, owned_frames: res.newOwned });
+      setProfile({ ...profile, gems: res.newGems });
+      // Add to local owned set
+      setOwnedItemIds(prev => new Set([...prev, item.id]));
       toast.success(`Bought ${item.name}!`);
       face?.pulse('happy', 1000);
     } catch (e: any) {
@@ -79,7 +93,7 @@ export default function ShopPage() {
         {/* Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
            {items.map(item => {
-              const isOwned = profile?.owned_frames?.includes(item.id);
+              const isOwned = ownedItemIds.has(item.id);
               const isEquipped = profile?.profile_frame === item.id;
 
               return (

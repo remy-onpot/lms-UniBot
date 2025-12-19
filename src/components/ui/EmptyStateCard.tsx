@@ -1,4 +1,4 @@
-import { UniBotFace } from './UniBotFace';
+import { UniBotMascot } from './UniBotMascot';
 import { Button } from './Button';
 
 interface EmptyStateCardProps {
@@ -14,7 +14,7 @@ export function EmptyStateCard({ title, description, actionLabel, onAction }: Em
       
       {/* The Animated Face */}
       <div className="mb-6 group-hover:scale-110 transition-transform duration-300">
-        <UniBotFace size="lg" state="bouncing" />
+        <UniBotMascot size={96} emotion="happy" action="dance" />
       </div>
 
       <h3 className="text-xl font-black text-slate-900 mb-2">{title}</h3>

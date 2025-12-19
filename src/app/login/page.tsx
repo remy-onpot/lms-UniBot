@@ -5,7 +5,6 @@ import { supabase } from '@/lib/supabase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { UniBotMascot, MascotEmotion, MascotAction } from '@/components/ui/UniBotMascot';
-// FaceAnalyticsService removed
 import { Mail, Lock, User, Key, Check, Loader2, ArrowRight } from 'lucide-react';
 
 export default function LoginPage() {
@@ -47,8 +46,6 @@ export default function LoginPage() {
         setMascotEmotion('cool');
         setMascotAction('backflip');
         
-        // Removed: FaceAnalyticsService.logLogin('email');
-        
         // Wait for animation, then redirect to dashboard
         await new Promise((res) => setTimeout(res, 1500));
         window.location.href = '/dashboard';
@@ -58,6 +55,7 @@ export default function LoginPage() {
         if (!fullName.trim()) throw new Error('Please enter your full name');
         if (role === 'ta' && !taCode.trim()) throw new Error('TA invite code is required');
 
+        // 🛡️ SECURITY: Whitelist roles for the API/Trigger to handle
         const safeRole = role === 'ta' ? 'student' : role;
         
         const { error: signUpError } = await supabase.auth.signUp({
@@ -101,7 +99,9 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-dvhlate-900 flex flex-col justify-center items-center p-6 relative overflow-hidden font-sans">
+    // 🏆 FIX: Using min-h-svh checks the "Small Viewport Height" (excludes address bar)
+    // This ensures content is never hidden behind mobile browser UI.
+    <div className="min-h-svh w-full bg-slate-900 flex flex-col justify-center items-center p-6 relative overflow-hidden font-sans">
       
       {/* Background Decor */}
       <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_top_right,#1e1b4b,transparent)] opacity-40 pointer-events-none" />

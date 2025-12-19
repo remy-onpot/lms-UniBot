@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Home, BookOpen, User, Users, LogOut, Settings, Sparkles } from 'lucide-react';
-import { UniBotFace } from '@/components/ui/UniBotFace';
+import { UniBotMascot } from '@/components/ui/UniBotMascot';
 import { cn } from '@/lib/utils';
 
 interface SidebarProps {
@@ -12,15 +12,17 @@ interface SidebarProps {
 export function Sidebar({ role }: SidebarProps) {
   const pathname = usePathname();
   const isLecturer = role === 'lecturer' || role === 'super_admin';
-  const profileLink = isLecturer ? '/dashboard/lecturer-profile' : '/dashboard/profile';
+  // Profile settings page is the same for all roles
+  const profileLink = '/dashboard/profile';
 
   const isActive = (path: string) => pathname === path || pathname.startsWith(`${path}/`);
 
   const links = [
     { name: 'Dashboard', href: '/dashboard', icon: Home },
-    { name: isLecturer ? 'My Classes' : 'My Courses', href: isLecturer ? '/dashboard/lecturer-profile' : '/dashboard/courses', icon: BookOpen },
+    // For lecturers, "My Classes" goes to the lecturer console; for students, "My Courses" stays on dashboard
+    { name: isLecturer ? 'My Classes' : 'My Courses', href: isLecturer ? '/dashboard/lecturer-profile' : '/dashboard', icon: BookOpen },
     { name: 'AI Tutor', href: '/ai-assistant', icon: Sparkles },
-    { name: 'Profile', href: profileLink, icon: isLecturer ? Users : User },
+    { name: 'Profile', href: profileLink, icon: User },
   ];
 
   return (
@@ -30,7 +32,7 @@ export function Sidebar({ role }: SidebarProps) {
       <div className="h-20 flex items-center px-6 border-b border-slate-100">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center border border-indigo-100">
-             <UniBotFace size="sm" state="happy" autoBlink={false} />
+             <UniBotMascot size={40} emotion="happy" action="none" autoBlink={false} />
           </div>
           <span className="font-black text-xl text-slate-900 tracking-tight">UniBot</span>
         </div>

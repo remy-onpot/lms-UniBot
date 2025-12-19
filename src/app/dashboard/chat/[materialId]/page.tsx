@@ -2,14 +2,20 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { supabase } from '@/lib/supabase';
 import { useAIChat } from '@/hooks/useAIChat';
 import { ChatWindow } from '@/components/features/chat/ChatWindow';
-import { PDFViewer } from '@/components/features/chat/PDFViewer'; // Ensure you have this
 import { UniBotMascot } from '@/components/ui/UniBotMascot';
 import { Button } from '@/components/ui/Button';
 import { ArrowLeft, MessageSquare, X, Maximize2, Minimize2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+// Lazy load PDFViewer (heavy component with react-pdf)
+const PDFViewer = dynamic(() => import('@/components/features/chat/PDFViewer').then(mod => ({ default: mod.PDFViewer })), {
+  loading: () => <div className="h-full flex items-center justify-center bg-slate-50"><UniBotMascot size={80} emotion="thinking" action="none" /></div>,
+  ssr: false
+});
 
 export default function StudyRoomPage() {
   const params = useParams();
