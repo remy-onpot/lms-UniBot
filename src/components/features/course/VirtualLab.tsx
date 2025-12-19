@@ -128,6 +128,8 @@ export function VirtualLab() {
   );
 }
 
+export default VirtualLab;
+
 // --- Subcomponents ---
 
 function ToolCard({ id, title, icon: Icon, color, desc, onClick }: any) {

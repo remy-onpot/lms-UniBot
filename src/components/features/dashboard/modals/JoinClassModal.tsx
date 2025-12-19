@@ -1,42 +1,107 @@
-// src/components/features/dashboard/modals/JoinClassModal.tsx
 'use client';
-import { Button } from '../../../ui/Button';
-import { FocusTrap } from 'focus-trap-react';
+
+import { useState } from 'react';
+import { X } from 'lucide-react';
+import { toast } from 'sonner';
+import { ClassService } from '@/lib/services/class.service'; // ✅ Import the Service
 
 interface JoinClassModalProps {
+  isOpen: boolean;
   onClose: () => void;
-  onSubmit: (e: React.FormEvent) => void;
-  loading: boolean;
-  code: string;
-  onChange: (code: string) => void;
+  userId: string;       // ✅ We need the user ID
+  onSuccess: () => void; // ✅ Callback to reload page
 }
 
-export default function JoinClassModal({ onClose, onSubmit, loading, code, onChange }: JoinClassModalProps) {
+export function JoinClassModal({ isOpen, onClose, userId, onSuccess }: JoinClassModalProps) {
+  const [accessCode, setAccessCode] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  if (!isOpen) return null;
+
+  const handleJoin = async () => {
+    if (!accessCode.trim()) return;
+
+    setIsSubmitting(true);
+    const toastId = toast.loading("Joining class...");
+
+    try {
+      // 1. ✅ Delegate to Service (Handles Lecturer/Student checks & Column names)
+      await ClassService.joinClass(accessCode, userId);
+      
+      toast.success("Successfully joined class!", { id: toastId });
+      setAccessCode('');
+      
+      // 2. Trigger parent refresh
+      onSuccess(); 
+      onClose();
+
+    } catch (error: any) {
+      toast.error(error.message, { id: toastId });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="join-class-title">
-      <FocusTrap focusTrapOptions={{ initialFocus: '#access-code-input', onDeactivate: onClose, clickOutsideDeactivates: true }}>
-        <div className="bg-white p-8 rounded-3xl w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200">
-          <h2 id="join-class-title" className="text-2xl font-bold mb-1 text-slate-900">Join Class</h2>
-          <p className="text-slate-500 text-sm mb-6">Enter the access code shared by your lecturer.</p>
-          <form onSubmit={onSubmit} className="space-y-4">
-              <input 
-                id="access-code-input"
-                aria-label="Access Code"
-                placeholder="XXX-0000" 
-                className="w-full bg-slate-50 border-2 border-dashed border-slate-200 p-4 rounded-xl text-center font-mono text-2xl uppercase tracking-widest text-slate-900 focus:border-blue-500 outline-none" 
-                value={code} 
-                onChange={e => onChange(e.target.value)} 
-                required 
-              />
-              <div className="flex gap-3 pt-2">
-                  <Button type="button" variant="secondary" onClick={onClose} className="flex-1">Cancel</Button>
-                  <Button type="submit" variant="primary" disabled={loading} className="flex-1 bg-slate-900 hover:bg-slate-800">
-                    {loading ? 'Joining...' : 'Join Class'}
-                  </Button>
-              </div>
-          </form>
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in"
+      onClick={() => !isSubmitting && onClose()}
+    >
+      <div 
+        className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl animate-in slide-in-from-bottom-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-2xl font-black text-slate-900">Join a Class</h3>
+          <button 
+            onClick={onClose}
+            disabled={isSubmitting}
+            className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 transition disabled:opacity-50"
+          >
+            <X className="w-5 h-5 text-slate-400" />
+          </button>
         </div>
-      </FocusTrap>
+
+        {/* Input Area */}
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-bold text-slate-700 mb-2 block">Access Code</label>
+            <input
+              type="text"
+              value={accessCode}
+              onChange={(e) => setAccessCode(e.target.value.toUpperCase())}
+              onKeyDown={(e) => e.key === 'Enter' && !isSubmitting && handleJoin()}
+              placeholder="e.g. CS-1234"
+              disabled={isSubmitting}
+              className="w-full h-14 px-4 text-center text-lg font-mono font-bold tracking-widest uppercase bg-slate-50 border-2 border-slate-200 rounded-xl focus:border-indigo-500 focus:bg-white outline-none transition disabled:opacity-50"
+              maxLength={20}
+              autoFocus
+            />
+            <p className="text-xs text-slate-500 mt-2 px-1">
+              Enter the code provided by your lecturer.
+            </p>
+          </div>
+
+          {/* Buttons */}
+          <div className="flex gap-3 pt-2">
+            <button
+              onClick={onClose}
+              disabled={isSubmitting}
+              className="flex-1 h-12 px-4 rounded-xl border-2 border-slate-200 text-slate-700 font-bold hover:bg-slate-50 transition disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleJoin}
+              disabled={isSubmitting || !accessCode.trim()}
+              className="flex-1 h-12 px-4 rounded-xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSubmitting ? 'Joining...' : 'Join Class'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { LecturerDashboard } from '@/components/features/dashboard/LecturerDashb
 import { DashboardSkeleton } from '@/components/skeletons/DashboardSkeleton';
 import { GamificationService } from '@/lib/services/gamification.service';
 import dynamic from 'next/dynamic';
+import { toast } from 'sonner';
 
 // Lazy Load Wizard (Performance Optimization)
 const OnboardingWizard = dynamic(() => import('@/components/OnboardingWizard'), { ssr: false });
@@ -20,7 +21,11 @@ interface DashboardClientProps {
 
 export default function DashboardClient({ user, initialProfile }: DashboardClientProps) {
   const [profile, setProfile] = useState<UserProfile>(initialProfile);
-  const [data, setData] = useState<any[]>([]); // Courses or Classes
+  
+  // State for different data types
+  const [classesData, setClassesData] = useState<any[]>([]); // Sessions/Groups (The "6" items)
+  const [modulesData, setModulesData] = useState<any[]>([]); // Unique Courses (The "1" item)
+  
   const [loading, setLoading] = useState(true);
   const [showWizard, setShowWizard] = useState(false);
 
@@ -30,41 +35,62 @@ export default function DashboardClient({ user, initialProfile }: DashboardClien
       setShowWizard(true);
     }
 
-    // 🚀 PERFORMANCE: Parallelize all async operations
     const loadDashboard = async () => {
       try {
-        // Run all async operations in parallel
-        const [dashboardData, dailyLoginUpdates] = await Promise.allSettled([
-          // Fetch Dashboard Data
+        // 🚀 PERFORMANCE: Parallelize all async operations
+        // We use Promise.allSettled so one failure doesn't crash the whole dashboard
+        const [
+            mainDataResult,   // Student Courses OR Lecturer Classes (Schedule)
+            dailyLoginResult, // Student Bonus
+            lecturerModulesResult // Lecturer Courses (Content/Modules)
+        ] = await Promise.allSettled([
+          
+          // 1. Fetch Main List (Classes/Sessions)
           profile.role === 'student'
             ? CourseService.getStudentCourses(user.id)
-            : ClassService.getDashboardClasses(user.id, profile.role, profile.is_course_rep),
-          // Daily Login Bonus (Students Only) - non-blocking
+            : ClassService.getDashboardClasses(user.id), 
+
+          // 2. Daily Login Bonus (Students Only)
           profile.role === 'student'
             ? GamificationService.checkDailyLogin(user.id)
-            : Promise.resolve(null)
+            : Promise.resolve(null),
+
+          // 3. Fetch Unique Modules (Lecturers Only) - Fixes the "6 vs 1" issue
+          profile.role === 'lecturer'
+            ? CourseService.getLecturerCourses(user.id)
+            : Promise.resolve([])
         ]);
 
-        // Handle dashboard data
-        if (dashboardData.status === 'fulfilled') {
-          setData(dashboardData.value || []);
+        // --- HANDLE RESULTS ---
+
+        // A. Handle Classes/Sessions Data
+        if (mainDataResult.status === 'fulfilled') {
+          setClassesData(mainDataResult.value || []);
         } else {
-          console.error("Dashboard Load Error:", dashboardData.reason);
+          console.error("Dashboard Classes Load Error:", mainDataResult.reason);
+          toast.error("Failed to load classes");
         }
 
-        // Handle daily login updates
-        if (dailyLoginUpdates.status === 'fulfilled' && dailyLoginUpdates.value) {
-          setProfile(prev => ({ ...prev, ...dailyLoginUpdates.value }));
+        // B. Handle Lecturer Modules Data
+        if (lecturerModulesResult.status === 'fulfilled' && profile.role === 'lecturer') {
+          setModulesData(lecturerModulesResult.value || []);
         }
+
+        // C. Handle Daily Login
+        if (dailyLoginResult.status === 'fulfilled' && dailyLoginResult.value) {
+          setProfile(prev => ({ ...prev, ...dailyLoginResult.value }));
+          toast.success("Daily login bonus collected! 💎");
+        }
+
       } catch (e) {
-        console.error("Dashboard Load Error:", e);
+        console.error("Critical Dashboard Error:", e);
       } finally {
         setLoading(false);
       }
     };
 
     loadDashboard();
-  }, [user.id, profile.role, profile.is_course_rep]);
+  }, [user.id, profile.role, profile.onboarding_completed]);
 
   if (loading) return <DashboardSkeleton />;
 
@@ -81,9 +107,16 @@ export default function DashboardClient({ user, initialProfile }: DashboardClien
 
       {/* Role-Based UI Rendering */}
       {profile.role === 'lecturer' || profile.role === 'super_admin' ? (
-        <LecturerDashboard profile={profile} classes={data} />
+        <LecturerDashboard 
+            profile={profile} 
+            classes={classesData} // The 6 Classes (for schedule/groups)
+            modules={modulesData} // The 1 Module (for content/stats)
+        />
       ) : (
-        <StudentDashboard profile={profile} courses={data} />
+        <StudentDashboard 
+            profile={profile} 
+            courses={classesData} // Students see a unified list
+        />
       )}
     </>
   );

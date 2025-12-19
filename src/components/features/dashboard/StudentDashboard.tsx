@@ -1,15 +1,14 @@
 'use client';
+
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { UserProfile } from '@/types';
 import { UniBotMascot, MascotEmotion, MascotAction } from '@/components/ui/UniBotMascot';
 import { 
   BookOpen, Trophy, Clock, ArrowRight, ShoppingBag, 
-  Sparkles, Target, CreditCard, Flame, Plus, X 
+  Sparkles, Target, CreditCard, Flame, Plus 
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
-import { toast } from 'sonner';
-
+import { JoinClassModal } from '@/components/features/dashboard/modals/JoinClassModal';
 interface StudentDashboardProps {
   profile: UserProfile;
   courses: any[];
@@ -25,11 +24,10 @@ export function StudentDashboard({ profile, courses }: StudentDashboardProps) {
   const [action, setAction] = useState<MascotAction>('wave');
   const idleTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // 🆕 JOIN CLASS STATE
+  // 🆕 JOIN CLASS STATE (Much simpler now)
   const [showJoinModal, setShowJoinModal] = useState(false);
-  const [accessCode, setAccessCode] = useState('');
-  const [joiningClass, setJoiningClass] = useState(false);
 
+  // --- MASCOT & GREETING LOGIC (Kept exactly the same) ---
   useEffect(() => {
     const hour = new Date().getHours();
     const name = profile.full_name.split(' ')[0];
@@ -38,7 +36,6 @@ export function StudentDashboard({ profile, courses }: StudentDashboardProps) {
     else setGreeting(`Good evening, ${name}. 🌙`);
   }, [profile.full_name]);
 
-  // 1. Initial Emotion (Streak)
   useEffect(() => {
     if (profile.current_streak >= 3) {
        setEmotion('cool'); setAction('dance');
@@ -47,126 +44,39 @@ export function StudentDashboard({ profile, courses }: StudentDashboardProps) {
     }
   }, [profile.current_streak]);
 
-  // 2. 💤 SLEEP LOGIC
   useEffect(() => {
     const resetIdle = () => {
       if (idleTimer.current) clearTimeout(idleTimer.current);
-      
       setEmotion(prev => {
         if (prev === 'sleeping') {
-            // Wake Up Sequence
-            setTimeout(() => setEmotion(profile.current_streak >= 3 ? 'cool' : 'happy'), 1500); 
-            return 'surprised'; 
+           setTimeout(() => setEmotion(profile.current_streak >= 3 ? 'cool' : 'happy'), 1500); 
+           return 'surprised'; 
         }
         return prev;
       });
-      
-      // If we woke up, ensure action resets
       if (action === 'none' && emotion !== 'sleeping') setAction('idle');
-
-      // Go to sleep after 30s
       idleTimer.current = setTimeout(() => {
         setEmotion('sleeping');
         setAction('none');
       }, 30000); 
     };
-
     window.addEventListener('mousemove', resetIdle);
     window.addEventListener('keydown', resetIdle);
     resetIdle(); 
-
     return () => {
         if (idleTimer.current) clearTimeout(idleTimer.current);
         window.removeEventListener('mousemove', resetIdle);
         window.removeEventListener('keydown', resetIdle);
     };
   }, [profile.current_streak, action, emotion]);
+  // -------------------------------------------------------
 
   const level = Math.floor(profile.xp / 1000) + 1;
   const xpProgress = ((profile.xp % 1000) / 1000) * 100;
+  
   const displayCourses = filter === 'all' 
     ? courses 
     : courses.filter(c => c.quizCount > 0 || c.assignmentCount > 0);
-
-  // 🆕 JOIN CLASS HANDLER
-  const handleJoinClass = async () => {
-    if (!accessCode.trim()) {
-      return toast.error('Please enter an access code');
-    }
-
-    setJoiningClass(true);
-    try {
-      // 1. Find class by access code
-      const { data: classData, error: classError } = await supabase
-        .from('classes')
-        .select('id, name, requires_approval, owner_id')
-        .eq('access_code', accessCode.trim().toUpperCase())
-        .eq('status', 'active')
-        .single();
-
-      if (classError || !classData) {
-        toast.error('Invalid or expired access code');
-        setJoiningClass(false);
-        return;
-      }
-
-      // 2. Check if already enrolled
-      const { data: existing } = await supabase
-        .from('class_enrollments')
-        .select('id, status')
-        .eq('class_id', classData.id)
-        .eq('student_id_code', profile.id)
-        .maybeSingle(); // Use maybeSingle() instead of single() to handle 0 rows gracefully
-
-      if (existing) {
-        if (existing.status === 'approved') {
-          toast.error('You are already enrolled in this class');
-        } else if (existing.status === 'pending') {
-          toast.info('Your enrollment is pending approval');
-        }
-        setJoiningClass(false);
-        setShowJoinModal(false);
-        return;
-      }
-
-      // 3. Enroll student
-      const status = classData.requires_approval ? 'pending' : 'approved';
-      const { error: enrollError } = await supabase
-        .from('class_enrollments')
-        .insert({
-          class_id: classData.id,
-          student_id_code: profile.id,
-          status,
-          role: 'student',
-          access_type: 'trial'
-        });
-
-      if (enrollError) {
-        console.error('Enrollment error:', enrollError);
-        toast.error('Failed to join class. Please try again.');
-        setJoiningClass(false);
-        return;
-      }
-
-      // Success!
-      if (status === 'pending') {
-        toast.success(`Request sent! Awaiting approval for "${classData.name}"`);
-      } else {
-        toast.success(`🎉 Successfully joined "${classData.name}"!`);
-      }
-
-      setAccessCode('');
-      setShowJoinModal(false);
-      setJoiningClass(false);
-
-      // Refresh page to show new class
-      setTimeout(() => window.location.reload(), 1500);
-    } catch (error: any) {
-      console.error('Join class error:', error);
-      toast.error('Something went wrong. Please try again.');
-      setJoiningClass(false);
-    }
-  };
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans pb-24 md:pb-12">
@@ -194,7 +104,7 @@ export function StudentDashboard({ profile, courses }: StudentDashboardProps) {
         <div className="max-w-7xl mx-auto relative z-10">
           <div className="flex flex-col md:flex-row items-center md:items-start gap-8">
             
-            {/* 🤖 UNI-BOT MASCOT (Interactive POKE) */}
+            {/* 🤖 UNI-BOT MASCOT */}
             <div 
                 className="shrink-0 -mt-6 md:-mt-10 cursor-pointer transition-transform active:scale-95"
                 onMouseEnter={() => {
@@ -206,11 +116,7 @@ export function StudentDashboard({ profile, courses }: StudentDashboardProps) {
                 }}
             >
                <div className="w-[180px] h-[180px]">
-                   <UniBotMascot 
-                     size={180} 
-                     emotion={emotion} 
-                     action={action} 
-                   />
+                   <UniBotMascot size={180} emotion={emotion} action={action} />
                </div>
             </div>
 
@@ -242,9 +148,9 @@ export function StudentDashboard({ profile, courses }: StudentDashboardProps) {
            onClick={() => router.push('/dashboard/daily-quiz')}
            className="group bg-slate-900 rounded-3xl p-6 md:p-8 text-white shadow-xl shadow-indigo-200/50 cursor-pointer relative overflow-hidden transition-all hover:scale-[1.01] active:scale-[0.99]"
         >
-            <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500 rounded-full blur-[80px] opacity-30 -mr-20 -mt-20 pointer-events-none"></div>
-            
-            <div className="relative z-10 flex justify-between items-center">
+           <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500 rounded-full blur-[80px] opacity-30 -mr-20 -mt-20 pointer-events-none"></div>
+           
+           <div className="relative z-10 flex justify-between items-center">
                <div>
                   <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md px-3 py-1 rounded-lg text-xs font-bold mb-3 border border-white/10 text-indigo-100">
                      <Clock className="w-3 h-3" /> 5 Mins
@@ -339,71 +245,16 @@ export function StudentDashboard({ profile, courses }: StudentDashboardProps) {
         </div>
       </div>
 
-      {/* 🆕 JOIN CLASS MODAL */}
-      {showJoinModal && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in"
-          onClick={() => !joiningClass && setShowJoinModal(false)}
-        >
-          <div 
-            className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl animate-in slide-in-from-bottom-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-2xl font-black text-slate-900">Join a Class</h3>
-              <button 
-                onClick={() => setShowJoinModal(false)}
-                disabled={joiningClass}
-                className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 transition disabled:opacity-50"
-              >
-                <X className="w-5 h-5 text-slate-400" />
-              </button>
-            </div>
-
-            {/* Access Code Input */}
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-bold text-slate-700 mb-2 block">
-                  Access Code
-                </label>
-                <input
-                  type="text"
-                  value={accessCode}
-                  onChange={(e) => setAccessCode(e.target.value.toUpperCase())}
-                  onKeyDown={(e) => e.key === 'Enter' && !joiningClass && handleJoinClass()}
-                  placeholder="e.g. CS-1234"
-                  disabled={joiningClass}
-                  className="w-full h-14 px-4 text-center text-lg font-mono font-bold tracking-widest uppercase bg-slate-50 border-2 border-slate-200 rounded-xl focus:border-indigo-500 focus:bg-white outline-none transition disabled:opacity-50"
-                  maxLength={20}
-                  autoFocus
-                />
-                <p className="text-xs text-slate-500 mt-2 px-1">
-                  Enter the code provided by your class representative or lecturer
-                </p>
-              </div>
-
-              {/* Actions */}
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={() => setShowJoinModal(false)}
-                  disabled={joiningClass}
-                  className="flex-1 h-12 px-4 rounded-xl border-2 border-slate-200 text-slate-700 font-bold hover:bg-slate-50 transition disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleJoinClass}
-                  disabled={joiningClass || !accessCode.trim()}
-                  className="flex-1 h-12 px-4 rounded-xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {joiningClass ? 'Joining...' : 'Join Class'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ✅ CLEAN MODAL USAGE */}
+     <JoinClassModal 
+        isOpen={showJoinModal} 
+        onClose={() => setShowJoinModal(false)}
+        userId={profile.id}
+        onSuccess={() => {
+            // Optional: You can do a router.refresh() here for smoother UX
+            window.location.reload(); 
+        }} 
+      />
     </div>
   );
 }

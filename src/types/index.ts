@@ -147,7 +147,7 @@ export interface Quiz {
 export interface QuizResult {
   id: string;
   quiz_id: string;
-  student_id_code: string;
+  student_id: string;
   score: number;
   total_questions: number;
   correct_answers: number;
@@ -188,7 +188,7 @@ export interface Assignment {
 export const AssignmentSubmissionSchema = z.object({
   id: z.string().uuid(),
   assignment_id: z.string().uuid(),
-  student_id_code: z.string().uuid(),
+  student_id: z.string().uuid(),
   content_text: z.string().optional().nullable(),
   file_url: z.string().url().optional().nullable(),
   
@@ -302,7 +302,7 @@ export interface Announcement {
  */
 export const ClassEnrollmentSchema = z.object({
   id: z.string().uuid(),
-  student_id_code: z.string().uuid(),
+  student_id: z.string().uuid(),
   class_id: z.string().uuid(),
   joined_at: z.string().datetime(),
   

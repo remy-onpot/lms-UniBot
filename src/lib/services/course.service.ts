@@ -11,7 +11,9 @@ export interface ReviewTopic {
 
 export const CourseService = {
   
-  // --- 1. CORE COURSE METHODS ---
+  // ==========================================
+  // 1. CORE COURSE METHODS
+  // ==========================================
 
   async getById(courseId: string) {
     const { data, error } = await supabase
@@ -35,14 +37,11 @@ export const CourseService = {
     if (error) throw error;
   },
 
-  // --- 2. NATIVE LESSON & MATERIAL METHODS (The New Stuff) ---
+  // ==========================================
+  // 2. NATIVE LESSON & MATERIAL METHODS
+  // ==========================================
 
-  /**
-   * 💾 SAVE NATIVE LESSON
-   * Updates or Creates the "Main Handout" material with the editor content.
-   */
   async updateMainLesson(courseId: string, htmlContent: string) {
-    // 1. Check for existing Main Handout
     const { data: existing } = await supabase
       .from('materials')
       .select('id')
@@ -51,7 +50,6 @@ export const CourseService = {
       .maybeSingle();
 
     if (existing) {
-      // UPDATE existing material
       const { data, error } = await supabase
         .from('materials')
         .update({ 
@@ -65,16 +63,15 @@ export const CourseService = {
       if (error) throw error;
       return data;
     } else {
-      // INSERT new "Native Lesson" material
       const { data, error } = await supabase
         .from('materials')
         .insert([{
-         course_id: courseId,
+          course_id: courseId,
           title: 'Main Lesson',
           is_main_handout: true,
           content_text: htmlContent,
           file_type: 'text/html', 
-          file_url: 'native_lesson', // <--- FIXED HERE (Was null)
+          file_url: 'native_lesson',
           category: 'handout'
         }])
         .select()
@@ -85,9 +82,6 @@ export const CourseService = {
     }
   },
 
-  /**
-   * Fetches materials, separating the Main Handout (Native Lesson) from Supplementary files.
-   */
   async getMaterials(courseId: string) {
     const { data, error } = await supabase
       .from('materials')
@@ -100,15 +94,12 @@ export const CourseService = {
     const materials = data as Material[];
     
     return {
-      // The "Brain" file - category='handout' or legacy is_main_handout=true
       mainHandout: materials.find(m => m.category === 'handout' || m.is_main_handout) || null,
-      // All other resources
       supplementary: materials.filter(m => m.category === 'supplementary' && !m.is_main_handout)
     };
   },
 
   async deleteMainHandout(materialId: string) {
-    // We reuse the robust delete logic
     await CourseService.deleteMaterial(materialId);
   },
 
@@ -121,17 +112,14 @@ export const CourseService = {
 
     if (fetchError) throw fetchError;
     
-    // Soft-archive topics if the main handout is deleted
     if (material?.category === 'handout') {
         await supabase.from('course_topics').update({ status: 'archived' }).eq('material_id', materialId);
     }
 
-    // Delete the Material Record
     const { error: matError } = await supabase.from('materials').delete().eq('id', materialId);
     if (matError) throw matError;
 
-    // CLEANUP STORAGE (Only if it was a file, not a native lesson)
-    if (material?.file_url) {
+    if (material?.file_url && material.file_url !== 'native_lesson') {
       const path = material.file_url.split('/course-content/').pop();
       if (path) {
         await supabase.storage.from('course-content').remove([path]);
@@ -139,14 +127,42 @@ export const CourseService = {
     }
   },
 
-  // --- 3. DASHBOARD & LIST METHODS (Restored) ---
+  // ==========================================
+  // 3. DASHBOARD & LIST METHODS
+  // ==========================================
+
+  // ✅ ADDED THIS: For Lecturer Dashboard (The missing piece!)
+  async getLecturerCourses(lecturerId: string) {
+    const { data, error } = await supabase
+      .from('courses') 
+      .select(`
+        *,
+        classes ( name, code ), 
+        assignments:assignments(count),
+        quizzes:quizzes(count)
+      `)
+      .eq('lecturer_id', lecturerId)
+      .eq('status', 'active') // Only fetch active modules
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    // Format for Dashboard
+    return data?.map((c: any) => ({
+      ...c,
+      className: c.classes?.name || 'Unassigned',
+      classCode: c.classes?.code,
+      assignmentCount: c.assignments?.[0]?.count || 0,
+      quizCount: c.quizzes?.[0]?.count || 0
+    })) || [];
+  },
 
   async getStudentCourses(userId: string) {
-    // Uses class_enrollments to find user's classes
     const { data: enrollments } = await supabase
       .from('class_enrollments')
       .select('class_id')
-      .eq('student_id', userId);
+      .eq('student_id', userId)
+      .eq('status', 'approved'); // Ensure we only get approved classes
 
     if (!enrollments?.length) return [];
 
@@ -220,7 +236,9 @@ export const CourseService = {
     return data as Announcement[];
   },
 
-  // --- 4. UTILITY METHODS ---
+  // ==========================================
+  // 4. UTILITY METHODS
+  // ==========================================
 
   async deleteQuiz(quizId: string) {
     const { error } = await supabase.from('quizzes').delete().eq('id', quizId);

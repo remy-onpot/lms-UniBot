@@ -1,280 +1,287 @@
 'use client';
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
-import { UserProfile } from '@/types';
-import { 
-  Plus, Search, Archive, AlertTriangle, LayoutDashboard, Crown, 
-  Lock, BookOpen, Users, Settings, FileText, CreditCard, ChevronRight
-} from 'lucide-react';
-import { getPlanLimits } from '@/lib/constants'; 
-import { UniBotMascot } from '@/components/ui/UniBotMascot'; 
-import { ClassService, DashboardClass } from '@/lib/services/class.service';
-import { toast } from 'sonner';
 
-import { StatsOverview } from '@/components/features/lecturer/StatsOverview';
-import { ClassList } from '@/components/features/lecturer/ClassList';
-import { UpgradeModal } from '@/components/features/lecturer/UpgradeModal';
-import { OverLimitModal } from '@/components/features/lecturer/OverLimitModal';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { UserProfile } from '@/types';
+import { DashboardClass, ClassService } from '@/lib/services/class.service';
+import { 
+  Plus, Users, BookOpen, MoreVertical, Archive, 
+  Trash2, RefreshCw, Calendar, ArrowRight, Settings 
+} from 'lucide-react';
+import { toast } from 'sonner';
 
 interface LecturerDashboardProps {
   profile: UserProfile;
-  classes: any[];
+  classes: DashboardClass[]; // The 6 "Sessions"
+  modules?: any[];           // The 1 "Unique Module" (Optional)
 }
 
-export function LecturerDashboard({ profile, classes }: LecturerDashboardProps) {
+export function LecturerDashboard({ profile, classes, modules = [] }: LecturerDashboardProps) {
   const router = useRouter();
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
-  // -- STATE --
-  const [activeClasses, setActiveClasses] = useState<DashboardClass[]>([]);
-  const [archivedClasses, setArchivedClasses] = useState<DashboardClass[]>([]);
-  const [limits, setLimits] = useState<any>({ max_classes: 1 });
-  const [saasUsage, setSaasUsage] = useState(0);
-  
-  const [search, setSearch] = useState('');
-  const [viewArchived, setViewArchived] = useState(false);
-  const [showUpgrade, setShowUpgrade] = useState(false);
-  
-  // -- INIT --
-  useEffect(() => {
-    // Process initial props
-    const userLimits = getPlanLimits(profile.role, profile.plan_tier, profile.is_course_rep);
-    setLimits(userLimits);
+  // Local state for immediate UI updates before reload
+  const [localClasses, setLocalClasses] = useState<DashboardClass[]>(classes);
 
-    const active = classes.filter(c => c.status === 'active');
-    const archived = classes.filter(c => c.status === 'archived');
-    
-    setActiveClasses(active);
-    setArchivedClasses(archived);
-    
-    // Usage only counts SaaS classes (Lecturer owned)
-    setSaasUsage(active.filter(c => c.type === 'saas').length);
-  }, [profile, classes]);
+  // Form State
+  const [newClass, setNewClass] = useState({ title: '', code: '', description: '' });
 
-  const isOverLimit = saasUsage > limits.max_classes;
+  // --- ACTIONS ---
 
-  // -- HANDLERS --
+  const handleCreateClass = async () => {
+    if (!newClass.title || !newClass.code) return toast.error("Title and Code are required");
 
-  const refreshData = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    const updated = await ClassService.getDashboardClasses(user.id, profile.role, profile.is_course_rep);
-    
-    const active = updated.filter((c: any) => c.status === 'active');
-    const archived = updated.filter((c: any) => c.status === 'archived');
-    setActiveClasses(active);
-    setArchivedClasses(archived);
-    setSaasUsage(active.filter((c: any) => c.type === 'saas').length);
-  };
-
-  const handleCreate = () => {
-    if (saasUsage >= limits.max_classes) setShowUpgrade(true);
-    else router.push('/dashboard/create-class');
-  };
-
-  const handleArchive = async (id: string, name: string) => {
-    // 🛡️ SECURITY: Prevent archiving Cohorts
-    const target = activeClasses.find(c => c.id === id);
-    if (target?.type === 'cohort') {
-        toast.error("Restricted: You cannot archive a University Cohort.");
-        return;
-    }
-
+    setIsSubmitting(true);
     try {
-        await ClassService.archiveClass(id, profile.id);
-        toast.success(`Archived ${name}`);
-        refreshData();
-    } catch (e: any) {
-        toast.error(e.message || "Failed to archive");
+      // ✅ FIXED: Passing object instead of 3 arguments
+      await ClassService.createClass({
+        title: newClass.title,
+        code: newClass.code,
+        description: newClass.description,
+        lecturer_id: profile.id
+      });
+
+      toast.success("Class created successfully!");
+      setShowCreateModal(false);
+      setNewClass({ title: '', code: '', description: '' });
+      window.location.reload(); // Refresh to see new data
+    } catch (error: any) {
+      toast.error(error.message || "Failed to create class");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handleRestore = async (id: string) => {
-    // Check limits before restore
-    if (saasUsage >= limits.max_classes) {
-        toast.error("Plan limit reached. Cannot restore.");
-        return;
-    }
+  const handleArchive = async (classId: string) => {
     try {
-        await ClassService.restoreClass(id, profile.id, profile);
-        toast.success("Class restored!");
-        refreshData();
-    } catch (e: any) {
-        toast.error(e.message);
-    }
+      await ClassService.archiveClass(classId);
+      toast.success("Class archived");
+      setLocalClasses(prev => prev.map(c => c.id === classId ? { ...c, isArchived: true } : c));
+    } catch (e) { toast.error("Failed to archive"); }
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    // 🛡️ SECURITY: Prevent deleting Cohorts
-    const target = archivedClasses.find(c => c.id === id);
-    if (target?.type === 'cohort') {
-        toast.error("Restricted: You cannot delete a University Cohort.");
-        return;
-    }
-
-    if (!confirm(`Are you sure you want to permanently delete ${name}? This cannot be undone.`)) return;
-    
+  const handleRestore = async (classId: string) => {
     try {
-        await ClassService.deleteClass(id, profile.id);
-        toast.success("Class deleted permanently.");
-        refreshData();
-    } catch (e: any) {
-        toast.error(e.message);
-    }
+      await ClassService.restoreClass(classId);
+      toast.success("Class restored");
+      setLocalClasses(prev => prev.map(c => c.id === classId ? { ...c, isArchived: false } : c));
+    } catch (e) { toast.error("Failed to restore"); }
   };
 
-  // Filter
-  const displayClasses = (viewArchived ? archivedClasses : activeClasses)
-    .filter(c => c.name.toLowerCase().includes(search.toLowerCase()));
+  const handleDelete = async (classId: string) => {
+    if (!confirm("Are you sure? This cannot be undone.")) return;
+    try {
+      // ✅ FIXED: Correct argument count
+      await ClassService.deleteClass(classId);
+      toast.success("Class deleted");
+      setLocalClasses(prev => prev.filter(c => c.id !== classId));
+    } catch (e) { toast.error("Failed to delete"); }
+  };
+
+  // --- DERIVED STATS ---
+  const activeClasses = localClasses.filter(c => !c.isArchived);
+  const archivedClasses = localClasses.filter(c => c.isArchived);
+  const totalStudents = localClasses.reduce((sum, c) => sum + (c.studentCount || 0), 0);
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans pb-20">
+    <div className="min-h-screen bg-slate-50 pb-20">
       
-      {/* 🔴 Alerts */}
-      <OverLimitModal activeClasses={activeClasses} limit={limits.max_classes} onArchive={(id) => handleArchive(id, 'Class')} />
-      
-      {isOverLimit && (
-        <div className="sticky top-0 z-50 bg-red-600 text-white px-4 py-3 shadow-md flex justify-between items-center animate-in slide-in-from-top-full">
-           <div className="flex items-center gap-3">
-              <AlertTriangle className="w-5 h-5 animate-pulse" />
-              <div className="text-xs md:text-sm font-bold">
-                 PLAN LIMIT EXCEEDED: {saasUsage}/{limits.max_classes} Classes. Please archive old classes.
-              </div>
-           </div>
-           <button onClick={() => setShowUpgrade(true)} className="bg-white text-red-600 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm hover:bg-red-50">
-              Upgrade
-           </button>
+      {/* HEADER */}
+      <div className="bg-white border-b border-slate-200 px-6 py-8 md:px-10">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-black text-slate-900">Lecturer Dashboard</h1>
+            <p className="text-slate-500 font-medium">Manage your courses, students, and content.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <button className="p-2.5 rounded-full bg-slate-100 hover:bg-slate-200 transition text-slate-600">
+               <Settings className="w-5 h-5" />
+            </button>
+            <button 
+              onClick={() => setShowCreateModal(true)}
+              className="flex items-center gap-2 bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-bold hover:bg-indigo-700 transition shadow-lg shadow-indigo-200"
+            >
+              <Plus className="w-5 h-5" /> Create Class
+            </button>
+          </div>
         </div>
-      )}
-
-      {/* 🚀 Header */}
-      <header className="bg-slate-900 pt-10 pb-24 px-6 border-b border-slate-800 relative overflow-hidden">
-         {/* Background Glow */}
-         <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-indigo-600 rounded-full blur-[150px] opacity-20 -translate-y-1/2 translate-x-1/3 pointer-events-none"></div>
-
-         <div className="max-w-7xl mx-auto relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-8">
-            <div className="flex-1">
-               <h1 className="text-3xl md:text-4xl font-black text-white tracking-tight flex items-center gap-3">
-                  <LayoutDashboard className="w-8 h-8 text-indigo-400" /> 
-                  Lecturer Console
-               </h1>
-               <div className="flex items-center gap-3 mt-2 text-sm font-medium text-slate-400">
-                  <span>{profile.full_name}</span>
-                  <span className="w-1 h-1 bg-slate-600 rounded-full"></span>
-                  <span className="flex items-center gap-1 text-indigo-400 uppercase tracking-wider text-xs font-bold">
-                     {profile.plan_tier === 'elite' && <Crown className="w-3 h-3 text-yellow-400 fill-yellow-400" />}
-                     {profile.plan_tier} Plan
-                  </span>
-               </div>
-               
-               {/* Quick Buttons (Fully Functional) */}
-               <div className="flex flex-wrap gap-3 mt-6">
-                  <button 
-                    onClick={() => router.push('/dashboard/profile')} 
-                    className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl text-sm font-bold border border-slate-700 hover:bg-slate-700 hover:text-white transition flex items-center gap-2"
-                  >
-                    <Settings className="w-4 h-4" /> Settings
-                  </button>
-                  <button 
-                    onClick={() => router.push('/dashboard/lecturer-profile/records')}
-                    className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl text-sm font-bold border border-slate-700 hover:bg-slate-700 hover:text-white transition flex items-center gap-2"
-                  >
-                    <FileText className="w-4 h-4" /> Records
-                  </button>
-                  <button 
-                    onClick={() => router.push('/dashboard/billing')}
-                    className="px-4 py-2 bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 rounded-xl text-sm font-bold hover:bg-indigo-600/30 transition flex items-center gap-2"
-                  >
-                    <CreditCard className="w-4 h-4" /> Billing
-                  </button>
-               </div>
-            </div>
-
-            {/* 🤖 MASCOT (Visible on Mobile & Desktop) */}
-            <div className="relative w-32 h-32 md:w-40 md:h-40 self-end md:self-auto shrink-0 transition-transform hover:scale-105">
-               <UniBotMascot 
-                 size={160} 
-                 emotion={isOverLimit ? 'sad' : 'cool'} 
-                 action={isOverLimit ? 'none' : 'wave'} 
-                 className="drop-shadow-2xl"
-               />
-            </div>
-         </div>
-
-         {/* Stats Cards (Floating) */}
-         <div className="max-w-7xl mx-auto relative z-20 mt-8">
-            <StatsOverview activeClasses={activeClasses} archivedClasses={archivedClasses} />
-         </div>
-      </header>
-
-      {/* 📂 Main Content */}
-      <div className="max-w-7xl mx-auto px-4 md:px-8 py-12 space-y-8">
-         
-         {/* Filters Bar */}
-         <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-            <div className="relative w-full md:w-96 group">
-               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-indigo-500 transition-colors" />
-               <input 
-                 value={search} 
-                 onChange={(e) => setSearch(e.target.value)} 
-                 placeholder="Search classes..." 
-                 className="w-full pl-12 pr-4 py-3 bg-white border-2 border-slate-200 rounded-xl outline-none focus:border-indigo-500 font-medium text-slate-700 transition-all shadow-sm"
-               />
-            </div>
-
-            <div className="flex gap-3 w-full md:w-auto">
-               <div className="flex bg-slate-200 p-1 rounded-xl">
-                  <button 
-                    onClick={() => setViewArchived(false)} 
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${!viewArchived ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                  >
-                    Active
-                  </button>
-                  <button 
-                    onClick={() => setViewArchived(true)} 
-                    className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${viewArchived ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                  >
-                    Archived
-                  </button>
-               </div>
-               <button 
-                 onClick={handleCreate}
-                 className="px-6 py-2 bg-slate-900 text-white rounded-xl text-sm font-bold shadow-lg hover:bg-slate-800 transition flex items-center gap-2 active:scale-95"
-               >
-                  {saasUsage >= limits.max_classes ? <Lock className="w-4 h-4 text-white/50" /> : <Plus className="w-4 h-4" />} 
-                  Create
-               </button>
-            </div>
-         </div>
-
-         {/* Class Grid */}
-         <div className={`
-            bg-white rounded-3xl p-6 border-2 min-h-[300px]
-            ${isOverLimit && !viewArchived ? 'border-red-100 bg-red-50/10' : 'border-slate-100'}
-         `}>
-            {displayClasses.length === 0 ? (
-               <div className="h-full flex flex-col items-center justify-center py-20 text-center">
-                  <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mb-4 text-slate-300">
-                     {viewArchived ? <Archive className="w-8 h-8" /> : <BookOpen className="w-8 h-8" />}
-                  </div>
-                  <h3 className="text-lg font-bold text-slate-900">No classes found</h3>
-                  <p className="text-slate-500 text-sm">
-                     {viewArchived ? "Archive is empty." : "Create your first class to get started."}
-                  </p>
-               </div>
-            ) : (
-               <ClassList 
-                 classes={displayClasses} 
-                 type={viewArchived ? 'archived' : 'active'}
-                 onArchive={handleArchive} 
-                 onRestore={handleRestore}
-                 onDelete={handleDelete}
-               />
-            )}
-         </div>
       </div>
 
-      {showUpgrade && <UpgradeModal plan={profile.plan_tier} onClose={() => setShowUpgrade(false)} />}
+      <div className="max-w-7xl mx-auto px-6 md:px-10 py-8 space-y-8">
+        
+        {/* STATS ROW */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <StatCard 
+            icon={<BookOpen className="w-6 h-6 text-indigo-600" />}
+            label="Active Modules"
+            value={modules.length} // ✅ Shows "1" Module correctly
+            color="bg-indigo-50"
+          />
+          <StatCard 
+            icon={<Calendar className="w-6 h-6 text-purple-600" />}
+            label="Active Sessions"
+            value={activeClasses.length} // ✅ Shows "6" Classes correctly
+            color="bg-purple-50"
+          />
+          <StatCard 
+            icon={<Users className="w-6 h-6 text-green-600" />}
+            label="Total Students"
+            value={totalStudents}
+            color="bg-green-50"
+          />
+        </div>
+
+        {/* ACTIVE CLASSES GRID */}
+        <div>
+          <h2 className="text-xl font-bold text-slate-900 mb-4 flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-slate-400" /> Active Sessions
+          </h2>
+          
+          {activeClasses.length === 0 ? (
+            <div className="bg-white rounded-3xl border-2 border-dashed border-slate-200 p-12 text-center">
+              <p className="text-slate-500 font-medium">No active classes found.</p>
+              <button onClick={() => setShowCreateModal(true)} className="text-indigo-600 font-bold mt-2 hover:underline">
+                Create your first class
+              </button>
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {activeClasses.map((cls) => (
+                <div 
+                  key={cls.id} 
+                  className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all group relative"
+                >
+                  <div className="flex justify-between items-start mb-3">
+                    <span className="bg-slate-100 text-slate-600 px-2.5 py-1 rounded-lg text-xs font-bold font-mono">
+                      {cls.code}
+                    </span>
+                    <div className="flex gap-1">
+                      <button onClick={() => handleArchive(cls.id)} className="p-1.5 hover:bg-slate-100 rounded text-slate-400 hover:text-orange-500 transition" title="Archive">
+                        <Archive className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => handleDelete(cls.id)} className="p-1.5 hover:bg-red-50 rounded text-slate-400 hover:text-red-500 transition" title="Delete">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* ✅ FIXED: Use cls.title instead of cls.name */}
+                  <h3 className="text-lg font-bold text-slate-900 mb-1 line-clamp-1">{cls.title}</h3>
+                  <p className="text-sm text-slate-500 mb-4 line-clamp-2 min-h-[40px]">
+                    {cls.description || "No description provided."}
+                  </p>
+
+                  <div className="flex items-center justify-between pt-4 border-t border-slate-100">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-500">
+                      <Users className="w-3.5 h-3.5" /> 
+                      {cls.studentCount} Students
+                    </div>
+                    <button 
+                      onClick={() => router.push(`/dashboard/courses/${cls.id}`)}
+                      className="text-indigo-600 text-xs font-bold flex items-center gap-1 hover:gap-2 transition-all"
+                    >
+                      Manage <ArrowRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ARCHIVED SECTION (Collapsible logic can be added, showing simple list for now) */}
+        {archivedClasses.length > 0 && (
+          <div className="pt-8 border-t border-slate-200">
+            <h2 className="text-lg font-bold text-slate-500 mb-4 flex items-center gap-2">
+              <Archive className="w-5 h-5" /> Archived Classes
+            </h2>
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5 opacity-75">
+              {archivedClasses.map((cls) => (
+                <div key={cls.id} className="bg-slate-50 p-5 rounded-2xl border border-slate-200">
+                  <div className="flex justify-between items-start mb-2">
+                     <span className="text-xs font-bold text-slate-400">{cls.code}</span>
+                     <button onClick={() => handleRestore(cls.id)} className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1">
+                        <RefreshCw className="w-3 h-3" /> Restore
+                     </button>
+                  </div>
+                  <h3 className="font-bold text-slate-700">{cls.title}</h3>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* CREATE MODAL */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl animate-in slide-in-from-bottom-4">
+            <h3 className="text-2xl font-black text-slate-900 mb-6">Create New Class</h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">Class Name</label>
+                <input 
+                  className="w-full h-12 px-4 rounded-xl border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none font-medium"
+                  placeholder="e.g. Introduction to Economics"
+                  value={newClass.title}
+                  onChange={e => setNewClass({...newClass, title: e.target.value})}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">Course Code</label>
+                <input 
+                  className="w-full h-12 px-4 rounded-xl border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none font-medium font-mono uppercase"
+                  placeholder="e.g. ECON101"
+                  value={newClass.code}
+                  onChange={e => setNewClass({...newClass, code: e.target.value.toUpperCase()})}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">Description (Optional)</label>
+                <textarea 
+                  className="w-full p-4 rounded-xl border border-slate-300 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 outline-none font-medium resize-none h-24"
+                  placeholder="Brief description of the class..."
+                  value={newClass.description}
+                  onChange={e => setNewClass({...newClass, description: e.target.value})}
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 mt-8">
+              <button 
+                onClick={() => setShowCreateModal(false)}
+                className="flex-1 h-12 font-bold text-slate-600 hover:bg-slate-50 rounded-xl transition"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleCreateClass}
+                disabled={isSubmitting || !newClass.title || !newClass.code}
+                className="flex-1 h-12 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition disabled:opacity-50"
+              >
+                {isSubmitting ? 'Creating...' : 'Create Class'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Simple Stat Card Component
+function StatCard({ icon, label, value, color }: { icon: any, label: string, value: number, color: string }) {
+  return (
+    <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+      <div className={`w-12 h-12 ${color} rounded-xl flex items-center justify-center shrink-0`}>
+        {icon}
+      </div>
+      <div>
+        <p className="text-sm font-bold text-slate-400 uppercase tracking-wide">{label}</p>
+        <p className="text-2xl font-black text-slate-900">{value}</p>
+      </div>
     </div>
   );
 }

@@ -3,11 +3,11 @@
 import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { 
-  Loader2, FileUp, Sparkles, Lock, BookOpen, Edit, Upload 
+  Loader2, Sparkles, Lock, BookOpen, Edit, Upload, ChevronUp, Scissors
 } from 'lucide-react';
 
 import { extractDataFromPDF } from '@/lib/utils/pdf-utils';
-import { extractDataFromDocx } from '@/lib/utils/docx-utils'; // ✅ NEW: Word Support
+import { extractDataFromDocx } from '@/lib/utils/docx-utils'; // ✅ Word Support
 import { CourseService } from '@/lib/services/course.service';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/Button';
 import { CourseMaterials } from '@/components/features/course/CourseMaterials';
 import { TopicList } from '@/components/features/course/TopicList';
 import LessonEditor from '@/components/features/editor/LessonEditor';
+import BookReader from '@/components/features/course/BookReader'; // ✅ Book Reader
 
 // Modals
 import { UploadResourceModal } from '@/components/features/course/modals/UploadResourceModal';
@@ -23,8 +24,7 @@ import { ManualQuizModal } from '@/components/features/course/modals/ManualQuizM
 import { AIQuizModal } from '@/components/features/course/modals/AIQuizModal';
 
 /**
- * 🦴 HELPER: Skeleton Extractor
- * Extracts only headings and lists to save AI tokens during Syllabus Gen.
+ * 🦴 HELPER: Skeleton Extractor for Syllabus Generation
  */
 const extractStructureFromHTML = (html: string) => {
   if (typeof window === 'undefined') return html;
@@ -50,7 +50,7 @@ interface CourseContentTabProps {
   classId: string;
   materials: any;
   topics: any[];
-  canEdit: boolean;
+  canEdit: boolean; // 🔒 Should be strict Lecturer-only permission
   isCourseRep: boolean;
   hasCourseAccess: boolean;
   hasBundleAccess: boolean;
@@ -77,6 +77,9 @@ export default function CourseContentTab({
   const [lessonContent, setLessonContent] = useState('');
   const [savingLesson, setSavingLesson] = useState(false);
   const [processingSyllabus, setProcessingSyllabus] = useState(false);
+  
+  // Collapsible Book State
+  const [isExpanded, setIsExpanded] = useState(false);
 
   // Modal State
   const [activeModal, setActiveModal] = useState<'upload_supp' | 'manual_quiz' | 'ai_quiz' | 'topic' | null>(null);
@@ -129,7 +132,6 @@ export default function CourseContentTab({
     } catch (err: any) {
         toast.error("Failed to import file", { id: toastId, description: err.message });
     } finally {
-        // Reset input
         e.target.value = "";
     }
   };
@@ -197,15 +199,17 @@ export default function CourseContentTab({
     }
   };
 
-  // Safe Access for TypeScript
   const supplementaryMaterials = materials?.supplementary || [];
 
   return (
     <>
+      {/* Dynamic Grid: Editor takes full width when active */}
       <div className={cn("space-y-8 transition-all duration-300", isEditingLesson ? "lg:col-span-3" : "lg:col-span-2")}>
         
-        {/* 1. NATIVE LESSON EDITOR */}
+        {/* 1. NATIVE LESSON SYSTEM */}
         <div className={cn("bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden transition-all", isEditingLesson && "ring-2 ring-indigo-50 border-indigo-100")}>
+            
+            {/* Header */}
             <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                 <div className="flex items-center gap-2">
                         <BookOpen className="w-5 h-5 text-indigo-600" />
@@ -224,47 +228,77 @@ export default function CourseContentTab({
                 )}
             </div>
 
+            {/* --- SWITCHER: EDITOR vs BOOK READER --- */}
             {isEditingLesson ? (
-                <div className="p-0">
+                // 🅰️ EDIT MODE (Full)
+                <div className="bg-slate-50/50">
                     {!lessonContent && (
                          <div className="m-4 bg-indigo-50 p-6 rounded-xl border border-indigo-100 text-center">
                             <p className="text-base text-indigo-900 font-bold mb-1">Start from scratch or import a file</p>
                             <p className="text-xs text-indigo-600 mb-4">
                                 ✨ <strong>Pro Tip:</strong> Word documents (.docx) give the best results!
                             </p>
-                            
                             <label className="cursor-pointer inline-flex items-center gap-2 bg-white border border-indigo-200 text-indigo-700 px-6 py-3 rounded-xl text-sm font-bold hover:bg-indigo-50 transition shadow-sm hover:shadow-md">
-                                <Upload className="w-4 h-4" /> 
-                                Import Word / PDF
-                                <input 
-                                    type="file" 
-                                    accept=".pdf,.docx" 
-                                    onChange={handleImportFile} 
-                                    className="hidden" 
-                                />
+                                <Upload className="w-4 h-4" /> Import Word / PDF
+                                <input type="file" accept=".pdf,.docx" onChange={handleImportFile} className="hidden" />
                             </label>
                         </div>
                     )}
+                    
+                    {/* Tip for Lecturers */}
+                    <div className="bg-orange-50 px-4 py-2 text-xs text-orange-800 border-b border-orange-100 flex items-center justify-center gap-2">
+                         <Scissors className="w-3 h-3" />
+                         <strong>Page Breaks:</strong> Click the "Split Page" button in the toolbar to create pages for the reader.
+                    </div>
+                    
                     <LessonEditor initialContent={lessonContent} onSave={handleSaveLesson} isSaving={savingLesson} />
                 </div>
             ) : (
-                <div className="p-8 prose prose-slate prose-lg max-w-none">
-                    {lessonContent ? (
-                        <div dangerouslySetInnerHTML={{ __html: lessonContent }} />
-                    ) : (
-                        <div className="text-center py-10">
-                            <div className="bg-slate-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3">
-                                <FileUp className="w-6 h-6 text-slate-300" />
+                // 🅱️ READ MODE (Collapsible + Paginated)
+                <div className="relative group">
+                     {/* Collapsible Container */}
+                     <div className={cn(
+                        "transition-all duration-500 ease-in-out bg-white",
+                        // If NOT expanded, force height limit and hide overflow
+                        !isExpanded && "max-h-[300px] overflow-hidden opacity-80" 
+                    )}>
+                        {/* THE BOOK READER COMPONENT */}
+                        {lessonContent ? (
+                             <BookReader content={lessonContent} />
+                        ) : (
+                            <div className="text-center py-12">
+                                <div className="bg-slate-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3">
+                                    <BookOpen className="w-6 h-6 text-slate-300" />
+                                </div>
+                                <h3 className="text-slate-400 font-bold">No lesson content yet.</h3>
+                                {canEdit && <p className="text-sm text-slate-400 mt-1">Click "Edit Lesson" to write or import a Word file.</p>}
                             </div>
-                            <h3 className="text-slate-400 font-bold">No lesson content yet.</h3>
-                            {canEdit && <p className="text-sm text-slate-400 mt-1">Click "Edit Lesson" to write or import a Word/PDF file.</p>}
+                        )}
+                    </div>
+
+                    {/* Expand/Collapse Trigger (Only if there is content) */}
+                    {lessonContent && (
+                        <div className={cn(
+                            "absolute bottom-0 left-0 right-0 flex justify-center pt-24 pb-6 transition-all z-10",
+                            !isExpanded ? "bg-gradient-to-t from-white via-white/95 to-transparent" : "bg-slate-50 border-t border-slate-100 mt-4 relative"
+                        )}>
+                            <button 
+                                onClick={() => setIsExpanded(!isExpanded)}
+                                className="flex items-center gap-2 bg-white border border-slate-200 px-6 py-2.5 rounded-full shadow-sm text-sm font-bold text-slate-700 hover:text-indigo-600 hover:border-indigo-200 hover:shadow-md transition-all active:scale-95 ring-4 ring-white"
+                            >
+                                {isExpanded ? (
+                                    <> <ChevronUp className="w-4 h-4" /> Close Lesson </>
+                                ) : (
+                                    <> <BookOpen className="w-4 h-4 text-indigo-500" /> Read Full Lesson </>
+                                )}
+                            </button>
                         </div>
                     )}
                 </div>
             )}
         </div>
 
-        {/* 2. SUPPLEMENTARY FILES (Safe Check) */}
+        {/* 2. SUPPLEMENTARY FILES */}
         {supplementaryMaterials.length > 0 && (
             <CourseMaterials 
                 mainHandout={null} 
@@ -295,7 +329,6 @@ export default function CourseContentTab({
 
                 {canEdit && (
                     <div className="flex items-center gap-2">
-                        {/* Gen Topics Button */}
                         <Button 
                             onClick={handleGenerateTopicsFromEditor}
                             disabled={processingSyllabus || !lessonContent}
@@ -307,7 +340,6 @@ export default function CourseContentTab({
                             Gen from Editor
                         </Button>
 
-                        {/* Upload Syllabus PDF Button */}
                         <label className="cursor-pointer flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-xs font-bold hover:border-indigo-300 hover:text-indigo-600 transition shadow-sm">
                             <Upload className="w-3 h-3" /> Upload PDF
                             <input type="file" accept=".pdf" onChange={handleSyllabusUpload} className="hidden" disabled={processingSyllabus} />

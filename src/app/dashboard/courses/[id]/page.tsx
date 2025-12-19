@@ -14,7 +14,7 @@ import {
   useCourseAssignments, 
 } from '@/hooks/useCourse';
 
-// Critical Components (Load immediately)
+// Critical Components (Load immediately for LCP)
 import { CourseHeader } from '@/components/features/course/CourseHeader';
 import { CourseSkeleton } from '@/components/skeletons/CourseSkeleton';
 import { ErrorState } from '@/components/ErrorState';
@@ -32,11 +32,11 @@ const CourseContentTab = dynamic(
 
 const CourseAssignmentsTab = dynamic(
   () => import('@/components/features/course/tabs/CourseAssignmentsTab'),
-  { loading: () => <div className="h-40 flex items-center justify-center text-slate-400">Loading Assignments...</div> }
+  { loading: () => <div className="h-40 flex items-center justify-center text-slate-400 font-medium">Loading Assignments...</div> }
 );
 
 const VirtualLab = dynamic(
-  () => import('@/components/features/course/VirtualLab'),
+  () => import('@/components/features/course/VirtualLab').then((mod) => mod.default),
   { loading: () => <div className="h-96 bg-slate-100 rounded-xl animate-pulse" /> }
 );
 import { MobileGuard } from '@/components/features/course/MobileGuard';
@@ -113,7 +113,12 @@ export default function CoursePage() {
   if (courseError) return <ErrorState message="Failed to load course" onRetry={() => window.location.reload()} />;
   if (!course) return <NotFoundState title="Course Not Found" />;
   
-  const canEdit = role === 'lecturer' || isCourseRep;
+  // 🔒 PERMISSIONS LOGIC
+  // Only ACTUAL Lecturers can edit the Lesson/Syllabus
+  const canEditContent = role === 'lecturer'; 
+  
+  // Course Reps can do logistics (like Announce), but NOT edit content
+  const canManageLogistics = role === 'lecturer' || isCourseRep;
 
   return (
     <div className="min-h-screen bg-slate-50/50 p-4 md:p-8 font-sans text-slate-900">
@@ -125,12 +130,12 @@ export default function CoursePage() {
             <button onClick={() => router.back()} className="text-sm font-bold text-slate-400 hover:text-slate-900 flex items-center gap-1 mb-2 transition-colors">← Back</button>
             <CourseHeader 
               course={course}
-              isPaywalledAndLocked={!hasCourseAccess && !canEdit}
-              canEdit={canEdit}
+              isPaywalledAndLocked={!hasCourseAccess && !canEditContent}
+              canEdit={canEditContent} // Only lecturer can see "Edit Course Settings"
               isCourseRep={isCourseRep}
               onInvite={() => { navigator.clipboard.writeText(window.location.href); toast.success("Link Copied!"); }}
               onAddWeek={() => { /* Handled in Content Tab */ }}
-              onAnnounce={() => setShowAnnounceModal(true)}
+              onAnnounce={() => setShowAnnounceModal(true)} // Reps CAN announce
             />
           </div>
           
@@ -173,7 +178,10 @@ export default function CoursePage() {
                     classId={course.class_id}
                     materials={materials}
                     topics={topics}
-                    canEdit={canEdit}
+                    
+                    // 🔒 SECURITY FIX: Only Lecturer can edit lessons
+                    canEdit={canEditContent} 
+                    
                     isCourseRep={isCourseRep}
                     hasCourseAccess={hasCourseAccess}
                     hasBundleAccess={hasBundleAccess}
@@ -189,7 +197,7 @@ export default function CoursePage() {
                         courseId={courseId}
                         courseName={course.title}
                         assignments={assignments}
-                        canEdit={canEdit}
+                        canEdit={canEditContent} // Reps usually don't create assignments, only lecturers
                         isCourseRep={isCourseRep}
                         refreshData={refreshData}
                     />
@@ -209,6 +217,8 @@ export default function CoursePage() {
 
       {/* GLOBAL MODALS */}
       {showPaywall && <CoursePaywallModal courseName={course.title} courseId={course.id} classId={course.class_id} onClose={() => setShowPaywall(false)} />}
+      
+      {/* Announcement Modal (Available to Lecturers & Reps) */}
       {showAnnounceModal && <AnnouncementModal isOpen={true} onClose={() => setShowAnnounceModal(false)} classId={course.class_id} lecturerId={userId!} />}
     </div>
   );
