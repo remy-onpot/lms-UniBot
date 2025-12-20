@@ -1,207 +1,245 @@
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/server';
+import { Class, ClassSchema, UserProfile } from '@/types';
+import { Database } from '@/types/database.types';
 
-// 1. Base Class Interface
-export interface Class {
-  id: string;
-  title: string;
-  code: string;
-  description?: string;
-  lecturer_id: string;
-  created_at: string;
-  university?: string;
-  department?: string;
-  semester?: string;
-  bg_color?: string;
-  status?: 'active' | 'archived'; // Added status
-}
+type DbClass = Database['public']['Tables']['classes']['Row'];
 
-// 2. Dashboard Extended Interface (Fixes the "No exported member" error)
-export interface DashboardClass extends Class {
-  className: string;      // Alias for 'code'
-  studentCount: number;   // Real count from DB
-  quizCount: number;      // Placeholder or Real
-  assignmentCount: number;// Placeholder or Real
-  isArchived: boolean;
-}
-
-export const ClassService = {
-
+export class ClassService {
+  
   // ==========================================
-  // 1. FETCHING DATA
+  // 1. FETCHING & LISTING
   // ==========================================
 
   /**
-   * 🏫 GET USER CLASSES (Raw Data)
+   * Get all classes relevant to the current user.
+   * - Lecturers: Classes they created or are assigned to teach.
+   * - Students: Classes they are enrolled in (approved status only).
    */
-  async getUserClasses(userId: string) {
-    const { data: user } = await supabase.from('users').select('role').eq('id', userId).single();
-    if (!user) throw new Error('User not found');
+  static async getUserClasses(userId: string) {
+    const supabase = await createClient();
 
-    if (user.role === 'lecturer') {
-      const { data, error } = await supabase
-        .from('classes')
-        .select(`*, instructors:class_instructors!inner(lecturer_id)`)
-        .eq('class_instructors.lecturer_id', userId)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return data || [];
-    } else {
-      const { data, error } = await supabase
-        .from('class_enrollments')
-        .select(`class:classes (*)`)
-        .eq('student_id', userId)
-        .eq('status', 'approved');
-      if (error) throw error;
-      return data?.map((e: any) => e.class) || [];
-    }
-  },
+    // A. Fetch Teaching Classes
+    const { data: teachingClasses, error: teachingError } = await supabase
+      .from('classes')
+      .select('*')
+      .or(`owner_id.eq.${userId},lecturer_id.eq.${userId}`)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false });
 
-  /**
-   * 📊 GET DASHBOARD CLASSES (With Counts & Formatting)
-   * Fixes "Fails to fetch number of students"
-   */
-  async getDashboardClasses(userId: string): Promise<DashboardClass[]> {
-    // 1. Get raw classes
-    const classes = await this.getUserClasses(userId);
-    
-    // 2. Fetch student counts for these classes
-    // We use a separate query because Supabase .count() inside select is tricky with joins
-    const { data: counts } = await supabase
+    if (teachingError) throw teachingError;
+
+    // B. Fetch Enrolled Classes
+    const { data: enrolledData, error: enrolledError } = await supabase
       .from('class_enrollments')
-      .select('class_id')
-      .in('class_id', classes.map(c => c.id))
+      .select('class:classes(*)')
+      .eq('student_id', userId)
       .eq('status', 'approved');
 
-    // 3. Map and Format
-    return classes.map((c: any) => {
-      // Calculate count for this specific class
-      const count = counts?.filter(x => x.class_id === c.id).length || 0;
+    if (enrolledError) throw enrolledError;
 
-      return {
-        ...c,
-        className: c.code,
-        studentCount: count, // ✅ Real Student Count
-        quizCount: 0,        // Placeholder (You can add real query later)
-        assignmentCount: 0,  // Placeholder
-        isArchived: c.status === 'archived'
-      };
-    });
-  },
+    // C. Merge & Deduplicate
+    // Students might be enrolled in a class they also TA for (edge case), so we use a Map.
+    const enrolledClasses = (enrolledData || [])
+      .map((e: any) => e.class)
+      .filter((c): c is DbClass => !!c && c.status === 'active');
 
-  async getClassDetails(classId: string) {
-    const { data, error } = await supabase.from('classes').select('*').eq('id', classId).single();
+    const combined = [...(teachingClasses || []), ...enrolledClasses];
+    const uniqueClasses = Array.from(new Map(combined.map(c => [c.id, c])).values());
+
+    return uniqueClasses;
+  }
+
+  /**
+   * Get full details for a single class, including stats.
+   */
+  static async getClassById(classId: string) {
+    const supabase = await createClient();
+
+    const { data, error } = await supabase
+      .from('classes')
+      .select(`
+        *,
+        lecturer:users!classes_lecturer_id_fkey ( full_name, avatar_url ),
+        _count:class_enrollments(count),
+        courses:courses(count)
+      `)
+      .eq('id', classId)
+      .single();
+
     if (error) throw error;
-    return data;
-  },
-
-  async getClassMembers(classId: string) {
-    const { data: students } = await supabase
-      .from('class_enrollments')
-      .select(`joined_at, student:users (id, full_name, avatar_url, email, role)`)
-      .eq('class_id', classId)
-      .eq('status', 'approved');
-
-    const { data: instructors } = await supabase
-      .from('class_instructors')
-      .select(`joined_at, lecturer:users (id, full_name, avatar_url, email, role)`)
-      .eq('class_id', classId);
-
+    
+    // Transform Supabase count objects into numbers
     return {
-      students: students?.map((s: any) => ({ ...s.student, joined_at: s.joined_at })) || [],
-      instructors: instructors?.map((i: any) => ({ ...i.lecturer, joined_at: i.joined_at })) || []
+      ...data,
+      _count: {
+        enrollments: data._count?.[0]?.count || 0,
+        courses: data.courses?.[0]?.count || 0
+      }
     };
-  },
-
-  // ==========================================
-  // 2. ACTIONS (Write)
-  // ==========================================
-
-  async joinClass(classCode: string, userId: string) {
-    const { data: user } = await supabase.from('users').select('role').eq('id', userId).single();
-    const { data: classData } = await supabase.from('classes').select('id').eq('code', classCode.toUpperCase()).single();
-    
-    if (!classData) throw new Error("Invalid Class Code");
-
-    if (user?.role === 'lecturer') {
-      const { error } = await supabase.from('class_instructors').insert({
-        class_id: classData.id,
-        lecturer_id: userId
-      });
-      if (error) throw error;
-    } else {
-      const { error } = await supabase.from('class_enrollments').insert({
-        class_id: classData.id,
-        student_id: userId,
-        status: 'approved',
-        role: 'student'
-      });
-      if (error) throw error;
-    }
-    return { success: true, classId: classData.id, role: user?.role };
-  },
+  }
 
   /**
-   * ➕ CREATE CLASS
-   * Accepts object to be cleaner, but works with your dashboard logic.
-   * NOTE: Your dashboard is calling this with (arg1, arg2, arg3).
-   * You MUST update the dashboard to pass an object, OR use this signature:
+   * Get the list of students (Roster) for a specific class.
    */
-  async createClass(classData: { title: string; code: string; description: string; lecturer_id: string }) {
-    const { data, error } = await supabase.from('classes').insert([classData]).select().single();
+  static async getClassStudents(classId: string) {
+    const supabase = await createClient();
+
+    const { data, error } = await supabase
+      .from('class_enrollments')
+      .select(`
+        joined_at,
+        status,
+        student:users!class_enrollments_student_id_fkey (
+          id, full_name, email, avatar_url, student_id_code
+        )
+      `)
+      .eq('class_id', classId)
+      .eq('status', 'approved')
+      .order('joined_at', { ascending: false });
+
     if (error) throw error;
     
-    if (data) {
-      await supabase.from('class_instructors').insert({ class_id: data.id, lecturer_id: classData.lecturer_id });
-    }
-    return data;
-  },
+    // Flatten the structure for easier frontend usage
+    return data.map((enrollment: any) => ({
+      ...enrollment.student,
+      joined_at: enrollment.joined_at,
+      status: enrollment.status
+    })) as (UserProfile & { joined_at: string })[];
+  }
 
-  // ✅ ADDED: Archive Class
-  async archiveClass(classId: string) {
+  // ==========================================
+  // 2. CREATION & MANAGEMENT
+  // ==========================================
+
+  static async createClass(data: Partial<Class>) {
+    const supabase = await createClient();
+    
+    // Validate
+    const validation = ClassSchema.safeParse(data);
+    if (!validation.success) {
+      throw new Error('Invalid class data: ' + validation.error.message);
+    }
+    const safeData = validation.data;
+
+    // Get current user for owner_id if not provided
+    const user = (await supabase.auth.getUser()).data.user;
+    if (!user) throw new Error('Unauthorized');
+
+    const { data: newClass, error } = await supabase
+      .from('classes')
+      .insert({
+        name: safeData.name,
+        owner_id: user.id,
+        lecturer_id: safeData.lecturer_id || user.id,
+        access_code: safeData.access_code,
+        type: safeData.type,
+        access_price: safeData.access_price || 0,
+        status: 'active'
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return newClass;
+  }
+
+  static async updateClass(classId: string, updates: Partial<Class>) {
+    const supabase = await createClient();
+
+    const { data, error } = await supabase
+      .from('classes')
+      .update(updates)
+      .eq('id', classId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  static async archiveClass(classId: string) {
+    const supabase = await createClient();
+    
     const { error } = await supabase
       .from('classes')
       .update({ status: 'archived' })
       .eq('id', classId);
-    if (error) throw error;
-    return true;
-  },
 
-  // ✅ ADDED: Restore Class
-  async restoreClass(classId: string) {
-    const { error } = await supabase
+    if (error) throw error;
+  }
+
+  /**
+   * Regenerate the 6-character access code for security.
+   */
+  static async regenerateAccessCode(classId: string) {
+    const supabase = await createClient();
+    const newCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+    const { data, error } = await supabase
       .from('classes')
-      .update({ status: 'active' })
-      .eq('id', classId);
-    if (error) throw error;
-    return true;
-  },
+      .update({ access_code: newCode })
+      .eq('id', classId)
+      .select('access_code')
+      .single();
 
-  // ✅ UPDATED: Accepts optional userId to fix "Expected 1 arg, got 2" error
-  async deleteClass(classId: string, userId?: string) {
-    const { error } = await supabase
+    if (error) throw error;
+    return data.access_code;
+  }
+
+  // ==========================================
+  // 3. MEMBERSHIP ACTIONS
+  // ==========================================
+
+  static async joinClass(userId: string, accessCode: string) {
+    const supabase = await createClient();
+
+    // 1. Find Class
+    const { data: classData, error: classError } = await supabase
       .from('classes')
-      .delete()
-      .eq('id', classId);
-    if (error) throw error;
-    return true;
-  },
+      .select('id, name')
+      .eq('access_code', accessCode)
+      .eq('status', 'active') // Cannot join archived classes
+      .single();
 
-  async leaveClass(classId: string, userId: string) {
-    const { data: user } = await supabase.from('users').select('role').eq('id', userId).single();
-    if (user?.role === 'lecturer') {
-       await supabase.from('class_instructors').delete().match({ class_id: classId, lecturer_id: userId });
-    } else {
-       await supabase.from('class_enrollments').delete().match({ class_id: classId, student_id: userId });
+    if (classError || !classData) throw new Error('Invalid or inactive access code');
+
+    // 2. Check Existing
+    const { data: existing } = await supabase
+      .from('class_enrollments')
+      .select('status')
+      .eq('class_id', classData.id)
+      .eq('student_id', userId)
+      .single();
+
+    if (existing) {
+      if (existing.status === 'approved') throw new Error('You are already in this class');
+      if (existing.status === 'pending') throw new Error('Your request is already pending approval');
+      if (existing.status === 'rejected') throw new Error('You were previously removed from this class');
     }
-    return true;
-  },
 
-  async kickStudent(classId: string, studentId: string) {
+    // 3. Enroll
+    const { error: enrollError } = await supabase
+      .from('class_enrollments')
+      .insert({
+        class_id: classData.id,
+        student_id: userId,
+        status: 'approved',
+        joined_at: new Date().toISOString()
+      });
+
+    if (enrollError) throw enrollError;
+    return classData;
+  }
+
+  static async removeStudent(classId: string, studentId: string) {
+    const supabase = await createClient();
+
     const { error } = await supabase
       .from('class_enrollments')
       .delete()
-      .match({ class_id: classId, student_id: studentId });
+      .eq('class_id', classId)
+      .eq('student_id', studentId);
+
     if (error) throw error;
-    return true;
   }
-};
+}

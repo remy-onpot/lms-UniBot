@@ -1,117 +1,113 @@
-import { supabase } from '@/lib/supabase'; // Adjusted path to match your project structure
-import { Assignment, AssignmentSubmission } from '@/types'; // Adjusted path
+import { createClient } from '@/lib/supabase/server';
+import { Assignment, AssignmentSubmission } from '@/types';
 
-export const AssignmentService = {
+export class AssignmentService {
   
-  // ✅ FIX: Added 'grading_config' to the type definition here
-  async create(courseId: string, data: { 
-    title: string; 
-    description: string; 
-    total_points: number; 
-    due_date: string;
-    grading_config?: any; // <--- This was missing!
+  static async submitAssignment(data: {
+    assignmentId: string;
+    studentId: string;
+    contentText?: string;
+    fileUrl?: string;
   }) {
-    const { error } = await supabase.from('assignments').insert([{
-      course_id: courseId,
-      ...data
-    }]);
-    if (error) throw error;
-  },
+    const supabase = await createClient();
 
-  async getByCourse(courseId: string) {
-    const { data, error } = await supabase
+    // 1. Validate Enrollment
+    const { data: assignment, error: fetchError } = await supabase
       .from('assignments')
-      .select('*')
-      .eq('course_id', courseId)
-      .order('due_date');
-    
+      .select('course_id, courses(class_id)')
+      .eq('id', data.assignmentId)
+      .single();
+
+    if (fetchError || !assignment) throw new Error('Assignment not found');
+
+    const classId = (assignment.courses as any)?.class_id;
+
+    if (classId) {
+      const { data: enrollment } = await supabase
+        .from('class_enrollments')
+        .select('status')
+        .eq('class_id', classId)
+        .eq('student_id', data.studentId)
+        .eq('status', 'approved')
+        .single();
+
+      if (!enrollment) throw new Error('You are not enrolled in this class');
+    }
+
+    // 2. Upsert Submission
+    const { data: submission, error } = await supabase
+      .from('assignment_submissions')
+      .upsert({
+        assignment_id: data.assignmentId,
+        student_id: data.studentId,
+        content_text: data.contentText,
+        file_url: data.fileUrl,
+        status: 'pending_grading',
+        submitted_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
     if (error) throw error;
-    return data as Assignment[];
-  },
+    return submission as AssignmentSubmission;
+  }
 
-  async submit(assignmentId: string, studentId: string, file: File, meta: { title: string; description: string; maxPoints: number }) {
-    // 1. Upload File
-    const path = `submissions/${assignmentId}/${studentId}_${Date.now()}.pdf`;
-    const { error: uploadError } = await supabase.storage.from('assignment-submissions').upload(path, file);
-    if (uploadError) throw uploadError;
-    
-    const { data: { publicUrl } } = supabase.storage.from('assignment-submissions').getPublicUrl(path);
+  static async gradeSubmission(submissionId: string, gradeData: {
+    score: number;
+    feedback: string;
+    gradedBy: 'lecturer' | 'ai';
+    aiBreakdown?: any;
+  }) {
+    const supabase = await createClient();
 
-    // 2. AI Grading (Mock for now)
-    const mockScore = Math.floor(Math.random() * (meta.maxPoints - 60 + 1) + 60);
-
-    // 3. Save Record
-    const { data, error } = await supabase.from('assignment_submissions').insert([{
-      assignment_id: assignmentId,
-      student_id: studentId,
-      file_url: publicUrl,
-      score: mockScore,
-      feedback: "Good effort! This is an AI-generated provisional grade.",
-      status: 'graded'
-    }]).select().single();
+    const { data, error } = await supabase
+      .from('assignment_submissions')
+      .update({
+        score: gradeData.score,
+        feedback: gradeData.feedback,
+        // graded_by: gradeData.gradedBy, // Ensure this column exists in DB or map it
+        // ai_breakdown: gradeData.aiBreakdown, // Ensure this column exists in DB or map it
+        status: 'graded'
+      })
+      .eq('id', submissionId)
+      .select()
+      .single();
 
     if (error) throw error;
     return data;
-  },
+  }
 
-  async getSubmissions(assignmentId: string) {
+  static async getSubmissions(assignmentId: string) {
+    const supabase = await createClient();
+
     const { data, error } = await supabase
       .from('assignment_submissions')
-      .select('*, student:users(full_name, email, avatar_url, university_id)')
-      .eq('assignment_id', assignmentId);
+      .select(`
+        *,
+        student:users(full_name, email, avatar_url, student_id_code)
+      `)
+      .eq('assignment_id', assignmentId)
+      .order('submitted_at', { ascending: false });
+
+    if (error) throw error;
+    return data;
+  }
+
+  static async getSubmission(submissionId: string) {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from('assignment_submissions')
+      .select('*')
+      .eq('id', submissionId)
+      .single();
       
     if (error) throw error;
-    return data as AssignmentSubmission[];
-  },
+    return data as AssignmentSubmission;
+  }
 
-  async getCourseGradebook(courseId: string) {
-    const { data: assignments } = await supabase
-      .from('assignments')
-      .select('id, title, total_points')
-      .eq('course_id', courseId)
-      .order('due_date');
-
-    if (!assignments || assignments.length === 0) return { assignments: [], submissions: [] };
-
-    const { data: submissions } = await supabase
-      .from('assignment_submissions')
-      .select(`
-        *, 
-        student:users(id, full_name, university_id, email)
-      `)
-      .in('assignment_id', assignments.map(a => a.id));
-
-    return { 
-      assignments, 
-      submissions: submissions || [] 
-    };
-  },
-
-  async delete(assignmentId: string) {
-    // 1. Clean up storage
-    const { data: submissions } = await supabase
-      .from('assignment_submissions')
-      .select('file_url')
-      .eq('assignment_id', assignmentId);
-
-    if (submissions && submissions.length > 0) {
-      const filesToRemove = submissions
-        .map(sub => {
-           if (!sub.file_url) return null;
-           try {
-             const parts = sub.file_url.split('/assignment-submissions/');
-             return parts.length > 1 ? parts[1] : null;
-           } catch (e) { return null; }
-        })
-        .filter(path => path !== null) as string[];
-
-      if (filesToRemove.length > 0) {
-        await supabase.storage.from('assignment-submissions').remove(filesToRemove);
-      }
-    }
-
-    // 2. Delete Record
+  static async delete(assignmentId: string) {
+    const supabase = await createClient();
     const { error } = await supabase.from('assignments').delete().eq('id', assignmentId);
     if (error) throw error;
-  },
-};
+  }
+}

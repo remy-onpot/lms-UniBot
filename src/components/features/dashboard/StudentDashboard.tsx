@@ -2,62 +2,113 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { UserProfile } from '@/types';
+import { UserProfile, Class } from '@/types';
 import { UniBotMascot, MascotEmotion, MascotAction } from '@/components/ui/UniBotMascot';
 import { 
-  BookOpen, Trophy, Clock, ArrowRight, ShoppingBag, 
-  Sparkles, Target, CreditCard, Flame, Plus 
+  BookOpen, Clock, ArrowRight, ShoppingBag, 
+  Sparkles, Flame, Plus, Loader2, AlertTriangle, GraduationCap 
 } from 'lucide-react';
 import { JoinClassModal } from '@/components/features/dashboard/modals/JoinClassModal';
+import { ClassService } from '@/lib/services/class.service';
+import { createClient } from '@/lib/supabase/client';
+
 interface StudentDashboardProps {
-  profile: UserProfile;
-  courses: any[];
+  user: UserProfile;
 }
 
-export function StudentDashboard({ profile, courses }: StudentDashboardProps) {
+export default function StudentDashboard({ user: profile }: StudentDashboardProps) {
   const router = useRouter();
-  const [filter, setFilter] = useState<'all' | 'active'>('all');
-  const [greeting, setGreeting] = useState('Welcome back!');
   
-  // 🎭 MASCOT STATE
+  // Data State
+  const [classes, setClasses] = useState<Class[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({
+    activeCourses: 0,
+    upcomingAssignments: 0,
+    nextDeadline: null as string | null
+  });
+
+  // UI State
+  const [filter, setFilter] = useState<'all' | 'active'>('all');
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  
+  // Mascot State
   const [emotion, setEmotion] = useState<MascotEmotion>('idle');
   const [action, setAction] = useState<MascotAction>('wave');
+  const [mascotMessage, setMascotMessage] = useState("Welcome back! Ready to learn?");
   const idleTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // 🆕 JOIN CLASS STATE (Much simpler now)
-  const [showJoinModal, setShowJoinModal] = useState(false);
+  // --- 1. DATA FETCHING ---
+  useEffect(() => {
+    async function loadData() {
+      try {
+        setLoading(true);
+        const supabase = createClient();
 
-  // --- MASCOT & GREETING LOGIC (Kept exactly the same) ---
+        // Fetch Data
+        const [myClasses, statsResponse] = await Promise.all([
+          ClassService.getUserClasses(profile.id),
+          supabase.rpc('get_student_dashboard_stats', { student_uuid: profile.id })
+        ]);
+
+        setClasses(myClasses);
+
+        if (!statsResponse.error && statsResponse.data) {
+          const rawStats = statsResponse.data as any;
+          setStats({
+            activeCourses: rawStats.activeCourses || 0,
+            upcomingAssignments: rawStats.upcomingAssignments || 0,
+            nextDeadline: rawStats.nextDeadline || null
+          });
+        }
+      } catch (err) {
+        console.error('Dashboard load error:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
+  }, [profile.id]);
+
+  // --- 2. SMART GREETING LOGIC ---
   useEffect(() => {
     const hour = new Date().getHours();
     const name = profile.full_name.split(' ')[0];
-    if (hour < 12) setGreeting(`Good morning, ${name}! ☀️`);
-    else if (hour < 17) setGreeting(`Good afternoon, ${name}. 👋`);
-    else setGreeting(`Good evening, ${name}. 🌙`);
-  }, [profile.full_name]);
+    let timeGreeting = '';
+    
+    if (hour < 12) timeGreeting = `Good morning, ${name}! ☀️`;
+    else if (hour < 17) timeGreeting = `Good afternoon, ${name}. 👋`;
+    else timeGreeting = `Good evening, ${name}. 🌙`;
 
-  useEffect(() => {
-    if (profile.current_streak >= 3) {
-       setEmotion('cool'); setAction('dance');
+    // Dynamic Context Awareness
+    if (stats.upcomingAssignments > 2) {
+      setMascotMessage(`${timeGreeting} You have ${stats.upcomingAssignments} tasks due soon! Stay focused!`);
+      // 'concerned' wasn't in original types, fallback to 'surprised' or 'idle' logic
+      setEmotion('surprised'); 
+    } else if (profile.current_streak >= 3) {
+      setMascotMessage(`${timeGreeting} You're on fire! ${profile.current_streak} day streak! 🔥`);
+      setEmotion('cool');
+      setAction('dance');
     } else {
-       setEmotion('happy'); setAction('wave');
+      setMascotMessage(timeGreeting);
+      setEmotion('happy');
     }
-  }, [profile.current_streak]);
+  }, [profile.full_name, profile.current_streak, stats.upcomingAssignments]);
 
+  // --- 3. INTERACTIVE MASCOT ---
   useEffect(() => {
     const resetIdle = () => {
       if (idleTimer.current) clearTimeout(idleTimer.current);
       setEmotion(prev => {
-        if (prev === 'sleeping') {
-           setTimeout(() => setEmotion(profile.current_streak >= 3 ? 'cool' : 'happy'), 1500); 
-           return 'surprised'; 
-        }
+        if (prev === 'sleeping') return 'surprised'; // Wake up!
         return prev;
       });
-      if (action === 'none' && emotion !== 'sleeping') setAction('idle');
+      
+      // Go back to sleep after inactivity
       idleTimer.current = setTimeout(() => {
         setEmotion('sleeping');
         setAction('none');
+        setMascotMessage("Zzz... Wake me up when you're ready to study.");
       }, 30000); 
     };
     window.addEventListener('mousemove', resetIdle);
@@ -68,20 +119,42 @@ export function StudentDashboard({ profile, courses }: StudentDashboardProps) {
         window.removeEventListener('mousemove', resetIdle);
         window.removeEventListener('keydown', resetIdle);
     };
-  }, [profile.current_streak, action, emotion]);
-  // -------------------------------------------------------
+  }, []);
 
+  // --- 4. RENDER HELPERS ---
   const level = Math.floor(profile.xp / 1000) + 1;
   const xpProgress = ((profile.xp % 1000) / 1000) * 100;
   
-  const displayCourses = filter === 'all' 
-    ? courses 
-    : courses.filter(c => c.quizCount > 0 || c.assignmentCount > 0);
+  const displayClasses = filter === 'all' 
+    ? classes 
+    : classes.filter(c => c.status === 'active');
+
+  const getDeadlineText = () => {
+    if (!stats.nextDeadline) return "No urgent deadlines";
+    const date = new Date(stats.nextDeadline);
+    if (isNaN(date.getTime())) return "No urgent deadlines";
+    const diffDays = Math.ceil((date.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+    
+    if (diffDays < 0) return "Assignments Overdue!";
+    if (diffDays === 0) return "Due Today!";
+    return `Next due in ${diffDays} day${diffDays === 1 ? '' : 's'}`;
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-10 h-10 animate-spin text-indigo-600" />
+          <p className="text-slate-500 font-medium">Loading UniBot...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans pb-24 md:pb-12">
       
-      {/* Top Right Shop */}
+      {/* Top Right Shop (Desktop) */}
       <div className="hidden md:flex absolute top-6 right-6 z-50 items-center gap-3">
          <button 
            onClick={() => router.push('/dashboard/shop')}
@@ -97,164 +170,191 @@ export function StudentDashboard({ profile, courses }: StudentDashboardProps) {
          </button>
       </div>
 
-      {/* --- HERO SECTION --- */}
-      <div className="relative bg-white pt-24 pb-16 px-6 md:px-10 rounded-b-[3rem] shadow-sm border-b border-slate-200 overflow-hidden">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-linear-to-br from-indigo-50 to-purple-50 rounded-full blur-3xl -mr-32 -mt-32 opacity-70 pointer-events-none"></div>
-        
-        <div className="max-w-7xl mx-auto relative z-10">
-          <div className="flex flex-col md:flex-row items-center md:items-start gap-8">
+      {/* --- HERO SECTION (New Layout) --- */}
+      <div className="pt-24 pb-8 px-6 md:px-10">
+        <div className="max-w-7xl mx-auto">
+          
+          {/* Welcome Card Container */}
+          <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-indigo-100 relative overflow-hidden flex flex-col md:flex-row items-center gap-8">
             
-            {/* 🤖 UNI-BOT MASCOT */}
-            <div 
-                className="shrink-0 -mt-6 md:-mt-10 cursor-pointer transition-transform active:scale-95"
-                onMouseEnter={() => {
-                    if (emotion !== 'sleeping') {
-                        setEmotion('surprised');
-                        setAction('none');
-                        setTimeout(() => setEmotion('happy'), 1000);
-                    }
-                }}
-            >
-               <div className="w-[180px] h-[180px]">
+            {/* Background Blob */}
+            <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-50 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none opacity-60"></div>
+
+            {/* LEFT: Text & Stats */}
+            <div className="flex-1 z-10 w-full">
+              {/* Speech Bubble (Visible on Desktop) */}
+              <div className="hidden md:block mb-4">
+                <div className="inline-block bg-indigo-50 text-indigo-900 px-4 py-2 rounded-2xl rounded-bl-none text-sm font-medium animate-in fade-in slide-in-from-bottom-2 duration-500">
+                  {mascotMessage}
+                </div>
+              </div>
+
+              {/* Mobile Greeting (Simple) */}
+              <h1 className="md:hidden text-2xl font-black text-slate-900 mb-2">Hi, {profile.full_name.split(' ')[0]}!</h1>
+
+              {/* XP Progress */}
+              <div className="flex items-center gap-4 mb-6">
+                <div className="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-700 font-black text-sm border-4 border-indigo-50">
+                  {level}
+                </div>
+                <div className="flex-1 max-w-sm">
+                  <div className="flex justify-between text-xs font-bold text-slate-500 mb-1">
+                    <span>Level {level}</span>
+                    <span>{Math.round(xpProgress)}%</span>
+                  </div>
+                  <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-gradient-to-r from-indigo-500 to-blue-500 transition-all duration-1000" style={{ width: `${xpProgress}%` }}></div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick Action Stats */}
+              <div className="flex flex-wrap gap-3">
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-orange-50 border border-orange-100 rounded-lg">
+                  <Flame className="w-4 h-4 text-orange-500 fill-orange-500" />
+                  <span className="text-xs font-bold text-orange-700">{profile.current_streak} Day Streak</span>
+                </div>
+                {stats.upcomingAssignments > 0 && (
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-100 rounded-lg">
+                    <Clock className="w-4 h-4 text-blue-600" />
+                    <span className="text-xs font-bold text-blue-700">{stats.upcomingAssignments} Tasks Due</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* RIGHT: Mascot (Responsive Sizing) */}
+            <div className="relative shrink-0 md:mr-8 order-first md:order-last">
+               {/* Mascot Container: Smaller on mobile, bigger on desktop */}
+               <div 
+                 className="w-[140px] h-[140px] md:w-[180px] md:h-[180px] transition-transform hover:scale-105 cursor-pointer"
+                 onClick={() => {
+                    setEmotion('happy');
+                    setAction('dance'); // Fixed: 'jump' -> 'dance' (assuming dance is valid)
+                 }}
+               >
                    <UniBotMascot size={180} emotion={emotion} action={action} />
+               </div>
+               
+               {/* Mobile Speech Bubble (Below mascot) */}
+               <div className="md:hidden mt-4 text-center">
+                  <p className="text-sm font-medium text-slate-600 bg-slate-50 px-3 py-2 rounded-xl inline-block">
+                    "{mascotMessage}"
+                  </p>
                </div>
             </div>
 
-            {/* 💬 Greeting Bubble */}
-            <div className="flex-1 w-full md:mt-4">
-              <div className="relative bg-slate-50 border border-slate-100 p-6 rounded-3xl rounded-tl-none shadow-sm max-w-xl">
-                 <h1 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight">{greeting}</h1>
-                 <p className="text-slate-500 font-medium mt-1">
-                   You're on a <span className="text-orange-500 font-bold inline-flex items-center gap-1"><Flame className="w-4 h-4 fill-orange-500"/> {profile.current_streak} day streak!</span>
-                 </p>
-                 
-                 {/* XP Bar */}
-                 <div className="mt-4 flex items-center gap-3 max-w-md">
-                    <div className="flex-1 h-2.5 bg-slate-200 rounded-full overflow-hidden">
-                       <div className="h-full bg-linear-to-r from-indigo-500 to-purple-500 transition-all duration-1000" style={{ width: `${xpProgress}%` }}></div>
-                    </div>
-                    <span className="text-[10px] font-bold text-slate-400 whitespace-nowrap">{Math.round(xpProgress)}% to Lvl {level+1}</span>
-                 </div>
-              </div>
-            </div>
           </div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-6 md:px-10 -mt-10 relative z-20 space-y-8">
+      {/* --- MAIN CONTENT GRID --- */}
+      <div className="max-w-7xl mx-auto px-6 md:px-10 space-y-8">
         
-        {/* --- DAILY WORKOUT --- */}
+        {/* 1. Daily Quiz Banner (Pop of Color) */}
         <div 
            onClick={() => router.push('/dashboard/daily-quiz')}
-           className="group bg-slate-900 rounded-3xl p-6 md:p-8 text-white shadow-xl shadow-indigo-200/50 cursor-pointer relative overflow-hidden transition-all hover:scale-[1.01] active:scale-[0.99]"
+           className="bg-gradient-to-r from-indigo-600 to-blue-600 rounded-2xl p-6 text-white shadow-lg shadow-indigo-200 cursor-pointer hover:shadow-xl transition-all relative overflow-hidden group"
         >
-           <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500 rounded-full blur-[80px] opacity-30 -mr-20 -mt-20 pointer-events-none"></div>
-           
+           <div className="absolute right-0 top-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none group-hover:bg-white/20 transition-colors"></div>
            <div className="relative z-10 flex justify-between items-center">
-               <div>
-                  <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md px-3 py-1 rounded-lg text-xs font-bold mb-3 border border-white/10 text-indigo-100">
-                     <Clock className="w-3 h-3" /> 5 Mins
-                  </div>
-                  <h3 className="text-xl md:text-2xl font-black mb-1">Daily Knowledge Check</h3>
-                  <p className="text-slate-400 text-sm font-medium mb-5 max-w-sm">
-                    Complete your daily quiz to earn +50 XP and keep your streak alive.
-                  </p>
-                  
-                  <button className="bg-white text-slate-900 px-6 py-3 rounded-xl font-bold text-sm hover:bg-indigo-50 transition flex items-center gap-2 shadow-lg">
-                     Start Quiz <ArrowRight className="w-4 h-4" />
-                  </button>
+             <div>
+               <div className="flex items-center gap-2 text-indigo-100 text-xs font-bold mb-2">
+                 <Sparkles className="w-3 h-3" /> Daily Challenge
                </div>
-               
-               <div className="hidden sm:block transform rotate-12 group-hover:rotate-6 transition-transform duration-500">
-                  <div className="w-24 h-24 bg-linear-to-br from-yellow-400 to-orange-500 rounded-2xl shadow-2xl flex items-center justify-center border-4 border-white/20">
-                     <Trophy className="w-12 h-12 text-white" />
-                  </div>
-               </div>
-            </div>
+               <h3 className="text-xl font-bold mb-1">Knowledge Check</h3>
+               <p className="text-indigo-100 text-sm opacity-90">Keep your streak alive! (+50 XP)</p>
+             </div>
+             <button className="bg-white/20 hover:bg-white/30 p-3 rounded-full backdrop-blur-sm transition-colors">
+               <ArrowRight className="w-5 h-5 text-white" />
+             </button>
+           </div>
         </div>
 
-        {/* --- COURSES --- */}
+        {/* 2. Courses Section */}
         <div id="my-courses">
-           <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
-              <h2 className="text-xl font-black text-slate-900 flex items-center gap-2">
-                <BookOpen className="w-6 h-6 text-indigo-600" />
+           <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
+              <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-indigo-600" />
                 My Courses
               </h2>
               
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex gap-2">
                  <button 
                    onClick={() => setShowJoinModal(true)}
-                   className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 transition active:scale-95 shadow-sm"
+                   className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 text-xs font-bold rounded-xl hover:bg-indigo-100 transition"
                  >
                     <Plus className="w-3.5 h-3.5" />
                     Join Class
                  </button>
-
-                 <button 
-                   onClick={() => router.push('/dashboard/student-billing')}
-                   className="flex items-center gap-2 px-4 py-2 bg-amber-50 text-amber-700 text-xs font-bold rounded-xl border border-amber-200 hover:bg-amber-100 transition active:scale-95"
-                 >
-                    <CreditCard className="w-3.5 h-3.5" />
-                    Manage Access
-                 </button>
-
                  <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
-                    <button onClick={() => setFilter('all')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${filter === 'all' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-900'}`}>All</button>
-                    <button onClick={() => setFilter('active')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${filter === 'active' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-900'}`}>Active</button>
+                    <button onClick={() => setFilter('all')} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${filter === 'all' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-900'}`}>All</button>
+                    <button onClick={() => setFilter('active')} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${filter === 'active' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-900'}`}>Active</button>
                  </div>
               </div>
            </div>
 
-           {courses.length === 0 ? (
-              <div className="bg-white rounded-3xl border-2 border-dashed border-slate-200 p-12 text-center">
-                 <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <BookOpen className="w-8 h-8 text-slate-300" />
-                 </div>
-                 <h3 className="text-lg font-bold text-slate-900">No courses yet</h3>
-                 <p className="text-slate-500 text-sm mt-1 mb-4">Join a class to start learning.</p>
-                 <button onClick={() => window.location.reload()} className="text-indigo-600 font-bold text-sm hover:underline">Refresh</button>
-              </div>
+           {classes.length === 0 ? (
+              <EmptyState onJoin={() => setShowJoinModal(true)} />
            ) : (
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-                 {displayCourses.map(course => (
-                    <div 
-                      key={course.id}
-                      onClick={() => router.push(`/dashboard/courses/${course.id}`)}
-                      className="group bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-xl hover:border-indigo-100 transition-all cursor-pointer relative overflow-hidden active:scale-[0.98]"
-                    >
-                       <div className="absolute top-0 right-0 w-20 h-20 bg-indigo-50 rounded-bl-full -mr-4 -mt-4 transition-colors group-hover:bg-indigo-100"></div>
-
-                       <div className="flex items-start gap-4 mb-4 relative z-10">
-                          <div className="w-12 h-12 bg-linear-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shrink-0 shadow-md group-hover:scale-110 transition-transform">
-                             <span className="text-white font-black text-lg">{course.title.charAt(0)}</span>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                             <h4 className="font-bold text-slate-900 line-clamp-1 group-hover:text-indigo-600 transition-colors">{course.title}</h4>
-                             <p className="text-xs text-slate-500 font-medium truncate">{course.className}</p>
-                          </div>
-                       </div>
-                       
-                       <div className="flex gap-2 relative z-10">
-                          {course.quizCount > 0 && <span className="bg-green-50 text-green-700 px-2 py-1 rounded text-[10px] font-bold border border-green-100 flex items-center gap-1"><Target className="w-3 h-3"/> {course.quizCount} Quizzes</span>}
-                          {course.assignmentCount > 0 && <span className="bg-purple-50 text-purple-700 px-2 py-1 rounded text-[10px] font-bold border border-purple-100 flex items-center gap-1"><BookOpen className="w-3 h-3"/> {course.assignmentCount} Tasks</span>}
-                       </div>
-                    </div>
+                 {displayClasses.map(cls => (
+                   <ClassCard key={cls.id} classData={cls} />
                  ))}
               </div>
            )}
         </div>
       </div>
 
-      {/* ✅ CLEAN MODAL USAGE */}
-     <JoinClassModal 
+      {/* ✅ MODAL */}
+      <JoinClassModal 
         isOpen={showJoinModal} 
         onClose={() => setShowJoinModal(false)}
         userId={profile.id}
-        onSuccess={() => {
-            // Optional: You can do a router.refresh() here for smoother UX
-            window.location.reload(); 
-        }} 
+        onSuccess={() => window.location.reload()} 
       />
+    </div>
+  );
+}
+
+// --- SUB-COMPONENTS (Cleaned up) ---
+
+function ClassCard({ classData }: { classData: Class }) {
+  const router = useRouter();
+  
+  return (
+    <div 
+      onClick={() => router.push(`/dashboard/class/${classData.id}`)}
+      className="group bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer relative overflow-hidden"
+    >
+      <div className="flex items-start gap-4 mb-4">
+          <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center shrink-0 font-black text-lg group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+            {classData.name.charAt(0)}
+          </div>
+          <div className="flex-1 min-w-0">
+            <h4 className="font-bold text-slate-900 line-clamp-1">{classData.name}</h4>
+            <p className="text-xs text-slate-500 font-medium truncate">Code: <span className="font-mono">{classData.access_code}</span></p>
+          </div>
+      </div>
+      
+      <div className="flex gap-2">
+          <span className="bg-slate-50 text-slate-600 px-2 py-1 rounded text-[10px] font-bold border border-slate-100 flex items-center gap-1">
+            <BookOpen className="w-3 h-3"/> {classData._count?.courses || 0} Modules
+          </span>
+      </div>
+    </div>
+  );
+}
+
+function EmptyState({ onJoin }: { onJoin: () => void }) {
+  return (
+    <div className="bg-white rounded-3xl border-2 border-dashed border-slate-200 p-12 text-center">
+        <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
+          <BookOpen className="w-8 h-8 text-slate-300" />
+        </div>
+        <h3 className="text-lg font-bold text-slate-900">No courses yet</h3>
+        <p className="text-slate-500 text-sm mt-1 mb-4">Join a class to start learning.</p>
+        <button onClick={onJoin} className="text-indigo-600 font-bold text-sm hover:underline">Join Class</button>
     </div>
   );
 }

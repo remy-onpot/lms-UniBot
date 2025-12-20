@@ -1,57 +1,54 @@
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/server';
 
-const TERMII_URL = 'https://api.ng.termii.com/api/sms/send';
-
-export const NotificationService = {
+export class NotificationService {
   
-  // 📢 The Master Broadcast Function
-  async broadcastToClass(classId: string, title: string, message: string) {
-    console.log(`🚀 Starting Broadcast: "${title}" to Class ${classId}`);
-
-    // 1. Fetch Recipients (Active Students Only)
-    const { data: enrollments } = await supabase
-      .from('student_course_access')
-      .select('student_id, student:users(phone_number, email)')
-      .eq('class_id', classId)
-      .gt('expires_at', new Date().toISOString());
-
-    if (!enrollments || enrollments.length === 0) {
-      return { count: 0, status: 'no_students' };
-    }
-
-    // 2. Extract & Sanitize Phone Numbers
-    const phoneNumbers = enrollments
-      .map((e: any) => e.student?.phone_number)
-      .filter(p => p && p.length > 9); // Basic validation
-
-    // 3. Send via API (Server-Side Logic)
-    // We call our internal API route to hide the API Key from the frontend
-    const response = await fetch('/api/notifications/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        phones: phoneNumbers,
-        message: `[UniBot] ${title}: ${message}`,
-      }),
-    });
-
-    const result = await response.json();
-
-    // 4. Log to "In-App" Notifications DB (Persistent History)
-    const inAppNotifications = enrollments.map((e: any) => ({
-      user_id: e.student_id,
+  /**
+   * Send a system notification (e.g., "Assignment Graded")
+   * Currently just logs, but can be connected to an email provider (Resend) or WhatsApp
+   */
+  static async sendNotification(userId: string, title: string, message: string, type: 'info' | 'alert' | 'success') {
+    // TODO: Integrate Resend or Twilio here
+    console.log(`[Notification to ${userId}] ${type.toUpperCase()}: ${title} - ${message}`);
+    
+    // If you add a 'notifications' table later:
+    /*
+    const supabase = await createClient();
+    await supabase.from('notifications').insert({
+      user_id: userId,
       title,
       message,
-      type: 'announcement',
-      read: false,
-      created_at: new Date().toISOString()
-    }));
-
-    await supabase.from('notifications').insert(inAppNotifications);
-
-    return { 
-      count: phoneNumbers.length, 
-      smsStatus: result.status 
-    };
+      type,
+      is_read: false
+    });
+    */
   }
-};
+
+  /**
+   * Send class-wide announcement
+   */
+  static async broadcastToClass(classId: string, title: string, message: string) {
+    const supabase = await createClient();
+
+    // 1. Save Announcement to DB
+    const { error } = await supabase.from('class_announcements').insert({
+      class_id: classId,
+      title,
+      message,
+      created_at: new Date().toISOString()
+    });
+
+    if (error) throw error;
+
+    // 2. Fetch all students (for email blast)
+    const { data: students } = await supabase
+      .from('class_enrollments')
+      .select('student_id')
+      .eq('class_id', classId)
+      .eq('status', 'approved');
+
+    if (students) {
+      console.log(`Broadcasting to ${students.length} students in class ${classId}`);
+      // Loop and send emails here
+    }
+  }
+}

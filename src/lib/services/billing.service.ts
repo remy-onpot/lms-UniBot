@@ -1,83 +1,155 @@
-// src/lib/services/billing.service.ts
-import { createClient } from "@/lib/supabase/server";
-import { COHORT_RULES } from "@/lib/constants";
+import { createClient } from '@/lib/supabase/server';
+import { AccessType, Transaction } from '@/types';
 
-export const BillingService = {
+export class BillingService {
   
-  /**
-   * Queries 'student_course_access' table for paid access status.
-   * 
-   * Access can be granted via:
-   * - Single course purchase (course_id matches)
-   * - Semester bundle (class_id matches - grants access to ALL courses in class)
-   */
-  async getStudentAccessStatus(studentId: string, courseId: string, classId: string) {
-    const supabase = await createClient();
-    const now = new Date().toISOString();
+  // ==========================================
+  // 1. PAYMENT PROCESSING (Write)
+  // ==========================================
 
-    // Check for any valid access record (single course OR bundle)
-    const { data: access, error } = await supabase
+  /**
+   * CORE METHOD: Records a successful payment and grants the user rights to the content.
+   * This should be called AFTER the Payment Gateway (Paystack/Stripe) confirms success.
+   */
+  static async grantAccess(params: {
+    userId: string;
+    reference: string;
+    amount: number;
+    accessType: AccessType;
+    classId: string;
+    courseId?: string; // Optional only if accessType is 'semester_bundle'
+  }) {
+    const supabase = await createClient();
+    
+    // A. Validate Bundle Integrity
+    if (params.accessType === 'single_course' && !params.courseId) {
+      throw new Error('Course ID is required for single course purchase');
+    }
+
+    // B. Log the Transaction (Financial Record)
+    const { error: txError } = await supabase
+      .from('transactions')
+      .insert({
+        user_id: params.userId,
+        reference: params.reference,
+        amount: params.amount,
+        status: 'success',
+        // Helper text to easily see what this transaction was for in DB viewer
+        purpose: params.accessType === 'semester_bundle' 
+          ? `Bundle Access: ${params.classId}` 
+          : `Course Access: ${params.courseId}`
+      });
+
+    if (txError) {
+      // In a real production app, we might want to alert an admin here because money moved but DB failed
+      throw new Error('Failed to log transaction: ' + txError.message);
+    }
+
+    // C. Grant Entitlement (The "Keys" to the content)
+    const expiresAt = new Date();
+    expiresAt.setMonth(expiresAt.getMonth() + 6); // Standard 6-month semester access
+
+    const accessData = {
+      student_id: params.userId,
+      access_type: params.accessType,
+      class_id: params.classId,
+      course_id: params.accessType === 'single_course' ? params.courseId : null,
+      amount_paid: params.amount,
+      payment_reference: params.reference,
+      expires_at: expiresAt.toISOString()
+    };
+
+    const { error: accessError } = await supabase
       .from('student_course_access')
-      .select('access_type, expires_at, course_id, class_id')
-      .eq('student_id', studentId)
-      .or(`course_id.eq.${courseId},class_id.eq.${classId}`)
-      .gt('expires_at', now)
-      .order('expires_at', { ascending: false })
-      .limit(1)
+      .insert(accessData);
+
+    if (accessError) {
+      console.error('CRITICAL: Payment succeeded but access grant failed', accessError);
+      throw new Error('Access grant failed. Please contact support with ref: ' + params.reference);
+    }
+
+    return { success: true };
+  }
+
+  // ==========================================
+  // 2. HISTORY & STATUS (Read)
+  // ==========================================
+
+  /**
+   * Get all financial transactions for a user (Student or Lecturer)
+   */
+  static async getUserTransactions(userId: string) {
+    const supabase = await createClient();
+
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    return data as Transaction[];
+  }
+
+  /**
+   * Check if a specific course/bundle is active for a student.
+   * Useful for the "Buy Now" vs "Open Course" button logic.
+   */
+  static async checkAccessStatus(userId: string, classId: string, courseId?: string) {
+    const supabase = await createClient();
+
+    // Check Bundle first (it overrides everything)
+    const { data: bundle } = await supabase
+      .from('student_course_access')
+      .select('id')
+      .eq('student_id', userId)
+      .eq('class_id', classId)
+      .eq('access_type', 'semester_bundle')
+      .gt('expires_at', new Date().toISOString())
       .maybeSingle();
 
-    if (error) {
-        console.error("Access Check Error:", error);
-        return { has_paid_course: false, has_paid_bundle: false, expires_at: null };
-    }
-    
-    if (!access) {
-         return { has_paid_course: false, has_paid_bundle: false, expires_at: null };
-    }
+    if (bundle) return 'bundle_active';
 
-    return {
-      // Single course access: access_type is 'single_course' and matches this specific course
-      has_paid_course: access.access_type === 'single_course' && access.course_id === courseId,
-      // Bundle access: access_type is 'semester_bundle' or 'full_semester' and matches the class
-      has_paid_bundle: ['semester_bundle', 'full_semester'].includes(access.access_type) && access.class_id === classId,
-      expires_at: access.expires_at
-    };
-  },
-
-  async calculateCheckoutPrice(itemType: 'single' | 'bundle', courseIds?: string[]) {
-    // 1. Single Course
-    if (itemType === 'single') {
-        return COHORT_RULES.PRICING.SINGLE_COURSE;
-    }
-
-    // 2. Bundle (Dynamic Calculation)
-    if (itemType === 'bundle' && courseIds && courseIds.length > 0) {
-        const rawTotal = courseIds.length * COHORT_RULES.PRICING.SINGLE_COURSE;
-        const discountAmount = rawTotal * COHORT_RULES.PRICING.BUNDLE_DISCOUNT_PERCENT;
-        const finalPrice = rawTotal - discountAmount;
-        
-        return Math.max(0, parseFloat(finalPrice.toFixed(2))); 
-    }
-    
-    return 0;
-  },
-
-  async isLecturerSubscriptionActive(userId: string) {
-      const supabase = await createClient();
+    // Check Single Course if ID provided
+    if (courseId) {
+      const { data: single } = await supabase
+        .from('student_course_access')
+        .select('id')
+        .eq('student_id', userId)
+        .eq('course_id', courseId)
+        .gt('expires_at', new Date().toISOString())
+        .maybeSingle();
       
-      const { data } = await supabase
-        .from('users')
-        .select('subscription_status, subscription_end_date')
-        .eq('id', userId)
-        .single();
-        
-      if (!data) return false;
-      
-      if (data.subscription_status === 'active') {
-         const expiry = new Date(data.subscription_end_date!);
-         return expiry > new Date(); 
-      }
-      
-      return false;
+      if (single) return 'course_active';
+    }
+
+    return 'no_access';
   }
-};
+
+  // ==========================================
+  // 3. SAAS SUBSCRIPTION (Lecturer Side)
+  // ==========================================
+
+  /**
+   * For Lecturers: Get their SaaS Plan status (Starter/Pro)
+   */
+  static async getLecturerSubscription(userId: string) {
+    const supabase = await createClient();
+
+    const { data, error } = await supabase
+      .from('users')
+      .select('plan_tier, subscription_status, subscription_end_date')
+      .eq('id', userId)
+      .single();
+
+    if (error) throw error;
+
+    const isActive = data.subscription_status === 'active' || data.plan_tier === 'free';
+    
+    return {
+      tier: data.plan_tier,
+      isActive,
+      endsAt: data.subscription_end_date
+    };
+  }
+}

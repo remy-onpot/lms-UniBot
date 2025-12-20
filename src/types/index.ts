@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Database } from './database.types';
 
 // =============================================================================
 // 1. GLOBAL ENUMS & CONSTANTS
@@ -7,18 +8,20 @@ import { z } from "zod";
 export const RoleSchema = z.enum(['student', 'lecturer', 'university_admin', 'super_admin']);
 export type Role = z.infer<typeof RoleSchema>;
 
-export const PlanTierSchema = z.enum(['starter', 'pro', 'elite', 'cohort_manager']);
+export const PlanTierSchema = z.enum(['free', 'starter', 'pro', 'university_enterprise']);
 export type PlanTier = z.infer<typeof PlanTierSchema>;
 
 export const AccessTypeSchema = z.enum(['single_course', 'semester_bundle']);
 export type AccessType = z.infer<typeof AccessTypeSchema>;
 
-export const MaterialCategorySchema = z.enum(['handout', 'supplementary', 'recording']);
+export const MaterialCategorySchema = z.enum(['supplementary', 'lecture_note', 'textbook']);
 export type MaterialCategory = z.infer<typeof MaterialCategorySchema>;
 
 // =============================================================================
 // 2. USER & PROFILE
 // =============================================================================
+
+export type DbUser = Database['public']['Tables']['users']['Row'];
 
 export const UserProfileSchema = z.object({
   id: z.string().uuid(),
@@ -26,32 +29,22 @@ export const UserProfileSchema = z.object({
   full_name: z.string().min(2),
   role: RoleSchema,
   avatar_url: z.string().url().optional().nullable(),
-  
-  // Business Logic
-  plan_tier: PlanTierSchema.default('starter'),
-  subscription_status: z.enum(['active', 'inactive', 'past_due']).default('inactive'),
+  plan_tier: PlanTierSchema.default('free'),
+  subscription_status: z.string().optional().nullable(),
   subscription_end_date: z.string().datetime().optional().nullable(),
   is_course_rep: z.boolean().default(false),
   university_id: z.string().uuid().optional().nullable(),
+  department: z.string().optional().nullable(),
+  student_id_code: z.string().optional().nullable(),
   custom_university: z.string().optional().nullable(),
   onboarding_completed: z.boolean().default(false),
-
-  // Gamification (Cached DB values)
   xp: z.number().default(0),
   gems: z.number().default(0),
   current_streak: z.number().default(0),
   last_activity_date: z.string().datetime().optional().nullable(),
-  last_login_date: z.string().datetime().optional().nullable(),
-  
-  // Profile
   bio: z.string().optional().nullable(),
-  interests: z.array(z.string()).optional(),
   phone_number: z.string().optional().nullable(),
   profile_frame: z.string().default('default'),
-  department: z.string().optional().nullable(),
-  student_id_code: z.string().optional().nullable(),
-  // NOTE: owned_frames removed - compute from user_inventory table instead
-  achievements: z.array(z.custom<Achievement>()).optional(), 
 });
 
 export type UserProfile = z.infer<typeof UserProfileSchema>;
@@ -60,102 +53,87 @@ export type UserProfile = z.infer<typeof UserProfileSchema>;
 // 3. CLASS & COURSE STRUCTURE
 // =============================================================================
 
+export type DbClass = Database['public']['Tables']['classes']['Row'];
+export type DbCourse = Database['public']['Tables']['courses']['Row'];
+
 export const ClassSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(3),
-  lecturer_id: z.string().uuid().nullable(), 
+  lecturer_id: z.string().uuid().nullable(),
   access_code: z.string().length(6),
   type: z.enum(['saas', 'cohort']).default('cohort'),
   created_at: z.string().datetime(),
-  
-  users: z.object({
-    plan_tier: PlanTierSchema
-  }).optional(),
+  access_price: z.number().default(0),
+  owner_id: z.string().uuid().optional(), // Added for creation flow
 
   _count: z.object({
-    students: z.number().optional(),
+    enrollments: z.number().optional(),
     courses: z.number().optional()
   }).optional()
 });
 
-export type Class = z.infer<typeof ClassSchema>;
+export type Class = z.infer<typeof ClassSchema> & {
+  courses?: Course[];
+};
 
 export const CourseSchema = z.object({
   id: z.string().uuid(),
   title: z.string().min(3),
-  description: z.string().optional(),
+  description: z.string().optional().nullable(),
   class_id: z.string().uuid(),
-  status: z.enum(['active', 'archived']).default('active'),
-  classes: ClassSchema.optional()
+  course_code: z.string().optional().nullable(),
+  lecturer_id: z.string().uuid().nullable(),
+  status: z.string().default('active'),
 });
 
-export type Course = z.infer<typeof CourseSchema>;
+export type Course = z.infer<typeof CourseSchema> & {
+  lecturer?: {
+    full_name: string;
+    avatar_url: string | null;
+  };
+  progress?: number; 
+  materials_count?: number;
+  assignments_count?: number;
+};
 
 // =============================================================================
-// 4. LEARNING CONTENT (Topics, Materials, Quizzes) - Unified
+// 4. LEARNING CONTENT
 // =============================================================================
+
+export type DbMaterial = Database['public']['Tables']['materials']['Row'];
 
 export interface Topic {
   id: string;
   week_number: number;
   title: string;
-  description: string;
-  start_page: number;
-  end_page: number;
-  quizzes: { id: string }[];
+  course_id: string;
+  created_at: string;
 }
 
-/**
- * FINAL MATERIAL INTERFACE: Reflects the single merged DB table.
- */
-export interface Material {
-  id: string;
-  title: string;
-  file_url: string;
-  file_type: string;
-  category: MaterialCategory; // New unified column
-  is_main_handout: boolean;
-  content_text?: string | null; // Must be nullable
-  course_id: string;
-}
+export interface Material extends DbMaterial {}
 
 export interface Question {
   id: string;
   quiz_id: string;
   question_text: string;
-  options: string[];
+  options: any;
   correct_answer: string;
-  explanation?: string;
 }
 
 export interface Quiz {
   id: string;
-  course_id: string;
-  topic_id: string;
+  course_id: string | null;
   title: string;
-  topic: string;
+  created_at: string;
   questions?: Question[];
-  courses?: {
-    classes?: {
-      users?: {
-        plan_tier: string;
-      };
-    };
-  };
 }
 
 export interface QuizResult {
   id: string;
-  quiz_id: string;
+  quiz_id: string | null;
   student_id: string;
   score: number;
-  total_questions: number;
-  correct_answers: number;
-  submitted_at: string;
-  users?: {
-    full_name: string;
-    email: string;
-  };
+  created_at: string;
 }
 
 // =============================================================================
@@ -169,7 +147,7 @@ export const AIGradeSchema = z.object({
     reasoning: z.string(),
     strengths: z.array(z.string()),
     weaknesses: z.array(z.string()),
-  }).nullable(), // MUST be nullable to work with optional fields
+  }).nullable(),
   is_ai_generated: z.boolean().default(true),
 });
 
@@ -178,9 +156,8 @@ export type AIGradedResponse = z.infer<typeof AIGradeSchema>;
 export interface Assignment {
   id: string;
   title: string;
-  description: string;
-  due_date: string;
-  total_points: number;
+  total_points: number | null;
+  due_date: string | null;
   course_id: string;
   mySubmission?: AssignmentSubmission;
 }
@@ -191,20 +168,10 @@ export const AssignmentSubmissionSchema = z.object({
   student_id: z.string().uuid(),
   content_text: z.string().optional().nullable(),
   file_url: z.string().url().optional().nullable(),
-  
-  // Unified Grading Fields
-  score: z.number().optional().nullable(), // Use score/feedback as the source of truth
+  score: z.number().optional().nullable(),
   feedback: z.string().optional().nullable(),
-  graded_by: z.enum(['ai', 'lecturer']).optional().nullable(),
-  
-  // AI-Specific breakdown data
-  ai_breakdown: AIGradeSchema.optional().nullable(),
-  
+  status: z.enum(['pending_grading', 'graded', 'failed']).default('pending_grading'),
   submitted_at: z.string().datetime(),
-  users: z.object({
-    full_name: z.string(),
-    email: z.string()
-  }).optional()
 });
 
 export type AssignmentSubmission = z.infer<typeof AssignmentSubmissionSchema>;
@@ -215,113 +182,79 @@ export type AssignmentSubmission = z.infer<typeof AssignmentSubmissionSchema>;
 
 export interface ChatSession {
   id: string;
-  user_id: string;
-  title: string;
-  created_at: string;
-  updated_at: string;
-  material_id?: string | null;
-}
-
-export const MessageSchema = z.object({
-  id: z.string(),
-  role: z.enum(['user', 'assistant', 'system']),
-  content: z.string(),
-  created_at: z.string().optional(),
-  isStreaming: z.boolean().optional(),
-  session_id: z.string().optional()
-});
-
-export type Message = z.infer<typeof MessageSchema>;
-export type ChatMessage = Message; // Alias
-
-export interface AIGeneratedQuestion {
-  question: string;
-  options: string[];
-  correct_answer: string;
-  explanation: string;
-}
-
-// =============================================================================
-// 7. GAMIFICATION & SHOP (Fixing Export Errors)
-// =============================================================================
-
-export interface Achievement {
-  id: string;
-  name: string;  // Matches DB column 'name', not 'title'
-  description: string;
-  xp_reward: number;
-  criteria?: Record<string, unknown>;
-  icon: string;
-  earned_at?: string;  // From user_achievements join
-}
-
-export interface StreakUpdate {
-  newStreak: number;
-  xpGained: number;
-  usedFreeze?: boolean;
-  earnedFreeze?: boolean;
-  earnedGems?: number;
-}
-
-export interface FrameItem {
-  id: string;
-  name: string;
-  cost: number;
-  cssClass: string; 
-}
-
-/** 
- * FINAL SHOP ITEM EXPORT: Matches DB schema shop_items table.
- */
-export interface ShopItem {
-  id: string;
-  name: string;
-  description?: string;
-  cost: number;
-  type: 'frame' | 'accessory' | 'theme' | 'badge';  // Matches DB 'type' column
-  asset_value: string;
-  metadata?: Record<string, unknown>;
-  is_active?: boolean;
-}
-
-/** * FINAL ANNOUNCEMENT EXPORT: Fixes the 'no exported member Announcement' error.
- */
-export interface Announcement {
-  id: string;
-  title: string;
-  message: string;
+  user_id: string | null;
+  title: string | null;
   created_at: string;
 }
 
+export interface ChatMessage {
+  id: string;
+  session_id: string;
+  user_id: string | null;
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+export type Message = ChatMessage;
+
 // =============================================================================
-// 8. BILLING & ACCESS (Golden Schema: Use class_enrollments)
+// 7. BILLING & ACCESS
 // =============================================================================
 
-/**
- * REPLACEMENT FOR StudentAccess: The core table is now `class_enrollments`.
- */
 export const ClassEnrollmentSchema = z.object({
   id: z.string().uuid(),
-  student_id: z.string().uuid(),
-  class_id: z.string().uuid(),
+  student_id: z.string().uuid().nullable(),
+  class_id: z.string().uuid().nullable(),
+  status: z.enum(['pending', 'approved', 'rejected', 'removed']),
   joined_at: z.string().datetime(),
-  
-  // Payment Status (migrated fields)
-  has_paid: z.boolean().default(false),
-  access_type: AccessTypeSchema,
-  expires_at: z.string().datetime().optional().nullable(),
 });
 
 export type ClassEnrollment = z.infer<typeof ClassEnrollmentSchema>;
 
-export const TransactionSchema = z.object({
+export const StudentAccessSchema = z.object({
   id: z.string().uuid(),
-  reference: z.string(),
-  amount: z.number(),
-  status: z.enum(['success', 'failed', 'pending']),
-  purpose: z.string(),
-  user_id: z.string().uuid(),
-  created_at: z.string().datetime(),
+  student_id: z.string().uuid(),
+  access_type: AccessTypeSchema,
+  class_id: z.string().uuid().optional().nullable(),
+  course_id: z.string().uuid().optional().nullable(),
+  amount_paid: z.number().optional().nullable(),
+  payment_reference: z.string().optional().nullable(),
+  expires_at: z.string().datetime().optional().nullable(),
 });
 
-export type Transaction = z.infer<typeof TransactionSchema>;
+export type StudentAccess = z.infer<typeof StudentAccessSchema>;
+
+export interface Transaction {
+  id: string;
+  reference: string;
+  amount: number;
+  status: string;
+  user_id: string;
+  created_at: string;
+}
+
+// =============================================================================
+// 8. SHOP
+// =============================================================================
+
+export interface ShopItem {
+  id: string;
+  name: string;
+  cost: number;
+  type: string;
+  is_active: boolean | null;
+}
+
+// =============================================================================
+// 9. EXTRAS
+// =============================================================================
+
+export interface Announcement {
+  id: string;
+  class_id: string | null;
+  lecturer_id: string | null;
+  title: string;
+  message: string;
+  created_at: string;
+}
