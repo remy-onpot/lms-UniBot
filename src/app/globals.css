@@ -135,3 +135,16 @@ body {
 .animate-mascot-float {
   animation: mascot-float-up 2s linear infinite;
 }
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Add this to the bottom of your globals.css */
+.scrollbar-hide::-webkit-scrollbar {
+    display: none;
+}
+
+.scrollbar-hide {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+}
