@@ -1,56 +1,42 @@
 import type { NextConfig } from "next";
 
-// 1. Initialize PWA with robust settings
+// 1. Initialize PWA
 const withPWA = require("next-pwa")({
   dest: "public",
-  disable: process.env.NODE_ENV === "development", // Disable in dev to prevent caching issues while coding
+  disable: process.env.NODE_ENV === "development",
   register: true,
   skipWaiting: true,
 });
 
 const nextConfig: NextConfig = {
-  // 2. React Safety & Performance
+  // 2. React Safety
   reactStrictMode: true,
-  
-  // @ts-ignore - Enable the new React Compiler for performance (Experimental in Next 15/16)
+  // @ts-ignore
   reactCompiler: true, 
 
-  // 3. Secure Image Handling
+  // 3. PERFORMANCE (High-End Machine)
+  // We keep source maps OFF because they are rarely needed in prod and slow down the build
+  productionBrowserSourceMaps: false,
+
+  // NOTE: We REMOVED the 'experimental' CPU limits. 
+  // Your 8-core machine will now use 100% power to build as fast as possible.
+
+  // 4. STRICT MODE (Show All Errors)
+  // We REMOVED 'typescript: { ignoreBuildErrors: true }'
+  // We REMOVED 'eslint: { ignoreDuringBuilds: true }'
+  // The build will now fail if it finds ANY issue.
+  
+  // 5. Images
   images: {
-    dangerouslyAllowSVG: true, // Required for SVG avatars like DiceBear
-    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;", // Protects against XSS in SVGs
-    
+    dangerouslyAllowSVG: true,
+    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
     remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: 'api.dicebear.com',
-        port: '',
-        pathname: '/7.x/**',
-      },
-      {
-        protocol: 'https',
-        hostname: 'tfxdquzxgvpcvuttglwt.supabase.co', // Your specific Supabase project
-        port: '',
-        pathname: '/storage/v1/object/public/**',
-      },
-      // General fallback for external auth providers (Google/GitHub avatars)
-      {
-        protocol: 'https',
-        hostname: '**',
-      }
+      { protocol: 'https', hostname: 'api.dicebear.com', port: '', pathname: '/7.x/**' },
+      { protocol: 'https', hostname: 'tfxdquzxgvpcvuttglwt.supabase.co', port: '', pathname: '/storage/v1/object/public/**' },
+      // Fallback for other providers
+      { protocol: 'https', hostname: '**' }
     ],
-  },
-
-  // 4. Build Configuration
-  // Note: 'eslint' key is removed as it is deprecated in Next.js 16 configuration.
-  // Linting is now controlled via .eslintrc.json and the build command.
-
-  typescript: {
-    // We allow build completion even if there are minor type mismatches.
-    // In a strict CI/CD pipeline, you might set this to false later.
-    ignoreBuildErrors: true, 
   },
 };
 
-// 5. Export with PWA Wrapper
 export default withPWA(nextConfig);

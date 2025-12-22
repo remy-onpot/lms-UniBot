@@ -1,33 +1,106 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { motion, useMotionValue, useSpring, useTransform, Variants } from 'framer-motion';
 import { UserProfile, Class } from '@/types';
 import { UniBotMascot, MascotEmotion, MascotAction } from '@/components/ui/UniBotMascot';
 import { 
-  BookOpen, Clock, ArrowRight, ShoppingBag, 
-  Sparkles, Flame, Plus, Loader2, AlertTriangle, GraduationCap 
+  BookOpen, Clock, ArrowUpRight, Zap, Target, 
+  Terminal, Activity, Shield, Sparkles, Filter
 } from 'lucide-react';
 import { JoinClassModal } from '@/components/features/dashboard/modals/JoinClassModal';
-import { ClassService } from '@/lib/services/class.service';
-import { createClient } from '@/lib/supabase/client';
 
-interface StudentDashboardProps {
-  user: UserProfile;
+// --- TYPES ---
+interface StudentStats {
+  activeCourses: number;
+  upcomingAssignments: number;
+  nextDeadline: string | null;
 }
 
-export default function StudentDashboard({ user: profile }: StudentDashboardProps) {
+interface StudentDashboardProps {
+  profile: UserProfile;
+  classes: Class[];
+  stats?: StudentStats | null;
+}
+
+// --- UTILS ---
+const springConfig = { stiffness: 400, damping: 30 };
+
+// --- COMPONENTS ---
+
+function TiltCard({ children, className, onClick }: { children: React.ReactNode, className?: string, onClick?: () => void }) {
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+
+  const mouseX = useSpring(x, springConfig);
+  const mouseY = useSpring(y, springConfig);
+
+  const rotateX = useTransform(mouseY, [-0.5, 0.5], ["15deg", "-15deg"]);
+  const rotateY = useTransform(mouseX, [-0.5, 0.5], ["-15deg", "15deg"]);
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    const xPct = mouseX / width - 0.5;
+    const yPct = mouseY / height - 0.5;
+    x.set(xPct);
+    y.set(yPct);
+  };
+
+  const handleMouseLeave = () => {
+    x.set(0);
+    y.set(0);
+  };
+
+  return (
+    <motion.div
+      style={{ rotateX, rotateY, transformStyle: "preserve-3d" }}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      onClick={onClick}
+      className={`relative overflow-hidden rounded-3xl bg-white/5 backdrop-blur-[20px] border border-white/10 shadow-2xl transition-colors hover:border-cyan-500/30 group ${className}`}
+    >
+      <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/5 to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+      {children}
+    </motion.div>
+  );
+}
+
+function SparklineStat({ label, value, icon: Icon, color }: { label: string, value: string | number, icon: any, color: string }) {
+  return (
+    <div className="relative h-full flex flex-col justify-between p-6 group cursor-default">
+      <div className="flex justify-between items-start">
+        <div className={`p-2 rounded-lg bg-white/5 border border-white/5 ${color} text-white`}>
+          <Icon size={18} />
+        </div>
+        <ArrowUpRight className="text-white/20 group-hover:text-cyan-400 transition-colors" size={18} />
+      </div>
+      
+      <div className="relative h-16 w-full mt-4 flex items-end overflow-hidden">
+        <span className="text-4xl font-black text-white tracking-tighter transition-all duration-300 group-hover:opacity-0 group-hover:translate-y-4">
+          {value}
+        </span>
+        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-all duration-300 group-hover:-translate-y-2 flex items-end">
+           <svg viewBox="0 0 100 30" className="w-full h-full stroke-cyan-400 fill-none stroke-[3px] drop-shadow-[0_0_10px_rgba(34,211,238,0.5)]">
+              <path d="M0,30 Q10,25 20,28 T40,15 T60,20 T80,5 T100,10" />
+           </svg>
+        </div>
+      </div>
+      
+      <p className="text-xs font-bold text-white/40 uppercase tracking-widest mt-1">{label}</p>
+    </div>
+  );
+}
+
+// --- MAIN DASHBOARD ---
+
+export default function StudentDashboard({ profile, classes, stats = null }: StudentDashboardProps) {
   const router = useRouter();
   
-  // Data State
-  const [classes, setClasses] = useState<Class[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({
-    activeCourses: 0,
-    upcomingAssignments: 0,
-    nextDeadline: null as string | null
-  });
-
   // UI State
   const [filter, setFilter] = useState<'all' | 'active'>('all');
   const [showJoinModal, setShowJoinModal] = useState(false);
@@ -35,80 +108,42 @@ export default function StudentDashboard({ user: profile }: StudentDashboardProp
   // Mascot State
   const [emotion, setEmotion] = useState<MascotEmotion>('idle');
   const [action, setAction] = useState<MascotAction>('wave');
-  const [mascotMessage, setMascotMessage] = useState("Welcome back! Ready to learn?");
+  const [mascotMessage, setMascotMessage] = useState(`System Online. User: ${profile.full_name}`);
   const idleTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // --- 1. DATA FETCHING ---
-  useEffect(() => {
-    async function loadData() {
-      try {
-        setLoading(true);
-        const supabase = createClient();
-
-        // Fetch Data
-        const [myClasses, statsResponse] = await Promise.all([
-          ClassService.getUserClasses(profile.id),
-          supabase.rpc('get_student_dashboard_stats', { student_uuid: profile.id })
-        ]);
-
-        setClasses(myClasses);
-
-        if (!statsResponse.error && statsResponse.data) {
-          const rawStats = statsResponse.data as any;
-          setStats({
-            activeCourses: rawStats.activeCourses || 0,
-            upcomingAssignments: rawStats.upcomingAssignments || 0,
-            nextDeadline: rawStats.nextDeadline || null
-          });
-        }
-      } catch (err) {
-        console.error('Dashboard load error:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadData();
-  }, [profile.id]);
-
-  // --- 2. SMART GREETING LOGIC ---
+  // 1. SMART GREETING LOGIC
   useEffect(() => {
     const hour = new Date().getHours();
     const name = profile.full_name.split(' ')[0];
     let timeGreeting = '';
     
-    if (hour < 12) timeGreeting = `Good morning, ${name}! ☀️`;
-    else if (hour < 17) timeGreeting = `Good afternoon, ${name}. 👋`;
-    else timeGreeting = `Good evening, ${name}. 🌙`;
+    if (hour < 12) timeGreeting = `Morning, Agent ${name}.`;
+    else if (hour < 17) timeGreeting = `Afternoon, Agent ${name}.`;
+    else timeGreeting = `Evening, Agent ${name}.`;
 
-    // Dynamic Context Awareness
-    if (stats.upcomingAssignments > 2) {
-      setMascotMessage(`${timeGreeting} You have ${stats.upcomingAssignments} tasks due soon! Stay focused!`);
-      // 'concerned' wasn't in original types, fallback to 'surprised' or 'idle' logic
+    if (stats && stats.upcomingAssignments > 2) {
+      setMascotMessage(`${timeGreeting} ⚠️ CRITICAL: ${stats.upcomingAssignments} tasks pending.`);
       setEmotion('surprised'); 
     } else if (profile.current_streak >= 3) {
-      setMascotMessage(`${timeGreeting} You're on fire! ${profile.current_streak} day streak! 🔥`);
+      setMascotMessage(`${timeGreeting} STREAK ACTIVE: ${profile.current_streak} days.`);
       setEmotion('cool');
       setAction('dance');
     } else {
-      setMascotMessage(timeGreeting);
+      setMascotMessage(`${timeGreeting} Systems Nominal.`);
       setEmotion('happy');
     }
-  }, [profile.full_name, profile.current_streak, stats.upcomingAssignments]);
+  }, [profile.full_name, profile.current_streak, stats]);
 
-  // --- 3. INTERACTIVE MASCOT ---
+  // 2. INTERACTIVE MASCOT LOGIC
   useEffect(() => {
     const resetIdle = () => {
       if (idleTimer.current) clearTimeout(idleTimer.current);
-      setEmotion(prev => {
-        if (prev === 'sleeping') return 'surprised'; // Wake up!
-        return prev;
-      });
+      setEmotion(prev => (prev === 'sleeping' ? 'surprised' : prev));
       
-      // Go back to sleep after inactivity
       idleTimer.current = setTimeout(() => {
         setEmotion('sleeping');
         setAction('none');
-        setMascotMessage("Zzz... Wake me up when you're ready to study.");
+        setMascotMessage("System Idle. Hibernation Mode Active.");
       }, 30000); 
     };
     window.addEventListener('mousemove', resetIdle);
@@ -121,240 +156,220 @@ export default function StudentDashboard({ user: profile }: StudentDashboardProp
     };
   }, []);
 
-  // --- 4. RENDER HELPERS ---
+  // Derived Values
   const level = Math.floor(profile.xp / 1000) + 1;
-  const xpProgress = ((profile.xp % 1000) / 1000) * 100;
+  const progress = (profile.xp % 1000) / 1000;
   
   const displayClasses = filter === 'all' 
     ? classes 
     : classes.filter(c => c.status === 'active');
 
-  const getDeadlineText = () => {
-    if (!stats.nextDeadline) return "No urgent deadlines";
-    const date = new Date(stats.nextDeadline);
-    if (isNaN(date.getTime())) return "No urgent deadlines";
-    const diffDays = Math.ceil((date.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
-    
-    if (diffDays < 0) return "Assignments Overdue!";
-    if (diffDays === 0) return "Due Today!";
-    return `Next due in ${diffDays} day${diffDays === 1 ? '' : 's'}`;
+  // Animation Variants
+  const container: Variants = {
+    hidden: { opacity: 0 },
+    show: { opacity: 1, transition: { staggerChildren: 0.1, delayChildren: 0.2 } }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <Loader2 className="w-10 h-10 animate-spin text-indigo-600" />
-          <p className="text-slate-500 font-medium">Loading UniBot...</p>
-        </div>
-      </div>
-    );
-  }
+  const item: Variants = {
+    hidden: { opacity: 0, y: 20 },
+    show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 400, damping: 30 } }
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans pb-24 md:pb-12">
+    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-cyan-500/30">
       
-      {/* Top Right Shop (Desktop) */}
-      <div className="hidden md:flex absolute top-6 right-6 z-50 items-center gap-3">
-         <button 
-           onClick={() => router.push('/dashboard/shop')}
-           className="flex items-center gap-2 bg-white/90 backdrop-blur-md px-4 py-2.5 rounded-full shadow-sm border border-slate-200 hover:scale-105 transition-transform group"
-         >
-            <ShoppingBag className="w-4 h-4 text-purple-600" />
-            <span className="text-xs font-bold text-slate-600 group-hover:text-purple-700">Store</span>
-            <span className="text-xs font-medium text-slate-400">|</span>
-            <div className="flex items-center gap-1">
-               <Sparkles className="w-3 h-3 text-blue-500" />
-               <span className="text-xs font-black text-slate-800">{profile.gems}</span>
-            </div>
-         </button>
-      </div>
+      {/* GLOBAL FX */}
+      <div className="fixed inset-0 opacity-[0.03] pointer-events-none z-50 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] mix-blend-overlay"></div>
+      <div className="fixed inset-0 bg-[radial-gradient(ellipse_at_top_left,_var(--tw-gradient-stops))] from-cyan-900/20 via-slate-950 to-slate-950 pointer-events-none z-0"></div>
 
-      {/* --- HERO SECTION (New Layout) --- */}
-      <div className="pt-24 pb-8 px-6 md:px-10">
-        <div className="max-w-7xl mx-auto">
+      <div className="relative z-10 max-w-[1600px] mx-auto p-6 md:p-10 lg:p-12">
+        
+        {/* HEADER */}
+        <header className="flex flex-col md:flex-row justify-between items-end mb-12 border-b border-white/5 pb-6">
+          <div>
+            <h1 className="text-5xl md:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-500 tracking-tighter mb-2">
+              DASHBOARD
+            </h1>
+            <div className="flex items-center gap-3 text-cyan-500 font-mono text-xs md:text-sm">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 bg-cyan-500 rounded-full animate-pulse"></span> ONLINE</span>
+              <span className="opacity-50">|</span>
+              <span className="uppercase">{profile.email}</span>
+            </div>
+          </div>
           
-          {/* Welcome Card Container */}
-          <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-indigo-100 relative overflow-hidden flex flex-col md:flex-row items-center gap-8">
-            
-            {/* Background Blob */}
-            <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-50 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none opacity-60"></div>
-
-            {/* LEFT: Text & Stats */}
-            <div className="flex-1 z-10 w-full">
-              {/* Speech Bubble (Visible on Desktop) */}
-              <div className="hidden md:block mb-4">
-                <div className="inline-block bg-indigo-50 text-indigo-900 px-4 py-2 rounded-2xl rounded-bl-none text-sm font-medium animate-in fade-in slide-in-from-bottom-2 duration-500">
-                  {mascotMessage}
-                </div>
-              </div>
-
-              {/* Mobile Greeting (Simple) */}
-              <h1 className="md:hidden text-2xl font-black text-slate-900 mb-2">Hi, {profile.full_name.split(' ')[0]}!</h1>
-
-              {/* XP Progress */}
-              <div className="flex items-center gap-4 mb-6">
-                <div className="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-700 font-black text-sm border-4 border-indigo-50">
-                  {level}
-                </div>
-                <div className="flex-1 max-w-sm">
-                  <div className="flex justify-between text-xs font-bold text-slate-500 mb-1">
-                    <span>Level {level}</span>
-                    <span>{Math.round(xpProgress)}%</span>
-                  </div>
-                  <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-indigo-500 to-blue-500 transition-all duration-1000" style={{ width: `${xpProgress}%` }}></div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Quick Action Stats */}
-              <div className="flex flex-wrap gap-3">
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-orange-50 border border-orange-100 rounded-lg">
-                  <Flame className="w-4 h-4 text-orange-500 fill-orange-500" />
-                  <span className="text-xs font-bold text-orange-700">{profile.current_streak} Day Streak</span>
-                </div>
-                {stats.upcomingAssignments > 0 && (
-                  <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-100 rounded-lg">
-                    <Clock className="w-4 h-4 text-blue-600" />
-                    <span className="text-xs font-bold text-blue-700">{stats.upcomingAssignments} Tasks Due</span>
-                  </div>
-                )}
-              </div>
+          <button 
+            onClick={() => router.push('/dashboard/shop')}
+            className="mt-6 md:mt-0 flex items-center gap-2 px-6 py-3 bg-slate-900/50 backdrop-blur-md border border-white/10 rounded-full hover:border-cyan-500/50 hover:shadow-[0_0_20px_rgba(34,211,238,0.2)] transition-all active:scale-95 group"
+          >
+            <div className="w-5 h-5 rounded bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-[10px] font-black text-white group-hover:rotate-12 transition-transform">
+              G
             </div>
+            <span className="font-bold text-sm text-slate-300 group-hover:text-white">{profile.gems}</span>
+          </button>
+        </header>
 
-            {/* RIGHT: Mascot (Responsive Sizing) */}
-            <div className="relative shrink-0 md:mr-8 order-first md:order-last">
-               {/* Mascot Container: Smaller on mobile, bigger on desktop */}
-               <div 
-                 className="w-[140px] h-[140px] md:w-[180px] md:h-[180px] transition-transform hover:scale-105 cursor-pointer"
-                 onClick={() => {
-                    setEmotion('happy');
-                    setAction('dance'); // Fixed: 'jump' -> 'dance' (assuming dance is valid)
-                 }}
-               >
-                   <UniBotMascot size={180} emotion={emotion} action={action} />
+        {/* BENTO GRID LAYOUT */}
+        <motion.div 
+          variants={container}
+          initial="hidden"
+          animate="show"
+          className="grid grid-cols-1 md:grid-cols-4 auto-rows-[180px] gap-6"
+        >
+          
+          {/* 1. MASCOT (2x2) */}
+          <motion.div variants={item} className="md:col-span-2 md:row-span-2 relative group">
+            <TiltCard className="h-full w-full flex flex-col items-center justify-center bg-gradient-to-b from-slate-900/80 to-slate-950/80">
+               <div className="absolute top-6 left-6 right-6 flex justify-between items-start">
+                  <div className="px-4 py-2 rounded-lg bg-cyan-950/30 border border-cyan-500/20 text-cyan-400 text-xs font-mono backdrop-blur-sm">
+                    {">"} {mascotMessage}
+                    <span className="animate-pulse">_</span>
+                  </div>
+                  <div className="text-[10px] font-bold text-white/20">LVL.{level}</div>
                </div>
                
-               {/* Mobile Speech Bubble (Below mascot) */}
-               <div className="md:hidden mt-4 text-center">
-                  <p className="text-sm font-medium text-slate-600 bg-slate-50 px-3 py-2 rounded-xl inline-block">
-                    "{mascotMessage}"
-                  </p>
+               <div 
+                 className="relative z-10 scale-125 filter drop-shadow-[0_0_30px_rgba(34,211,238,0.15)] group-hover:drop-shadow-[0_0_50px_rgba(34,211,238,0.3)] transition-all duration-500 cursor-pointer"
+                 onClick={() => { setEmotion('happy'); setMascotMessage("Affirmative. Ready for input."); }}
+               >
+                 <UniBotMascot size={280} emotion={emotion} action={action === 'none' ? undefined : action} />
                </div>
-            </div>
 
-          </div>
-        </div>
-      </div>
-
-      {/* --- MAIN CONTENT GRID --- */}
-      <div className="max-w-7xl mx-auto px-6 md:px-10 space-y-8">
-        
-        {/* 1. Daily Quiz Banner (Pop of Color) */}
-        <div 
-           onClick={() => router.push('/dashboard/daily-quiz')}
-           className="bg-gradient-to-r from-indigo-600 to-blue-600 rounded-2xl p-6 text-white shadow-lg shadow-indigo-200 cursor-pointer hover:shadow-xl transition-all relative overflow-hidden group"
-        >
-           <div className="absolute right-0 top-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none group-hover:bg-white/20 transition-colors"></div>
-           <div className="relative z-10 flex justify-between items-center">
-             <div>
-               <div className="flex items-center gap-2 text-indigo-100 text-xs font-bold mb-2">
-                 <Sparkles className="w-3 h-3" /> Daily Challenge
+               {/* XP Progress Bar */}
+               <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-slate-800">
+                  <motion.div 
+                    initial={{ width: 0 }}
+                    animate={{ width: `${progress * 100}%` }}
+                    className="h-full bg-cyan-500 shadow-[0_0_10px_rgba(34,211,238,0.8)] relative" 
+                  >
+                    <div className="absolute right-0 -top-1 w-2 h-4 bg-white/80 blur-[2px]"></div>
+                  </motion.div>
                </div>
-               <h3 className="text-xl font-bold mb-1">Knowledge Check</h3>
-               <p className="text-indigo-100 text-sm opacity-90">Keep your streak alive! (+50 XP)</p>
+            </TiltCard>
+          </motion.div>
+
+          {/* 2. STATS (1x1 each) */}
+          <motion.div variants={item} className="md:col-span-1 md:row-span-1">
+            <TiltCard className="h-full bg-slate-900/60">
+              <SparklineStat 
+                label="Streak" 
+                value={profile.current_streak} 
+                icon={Zap} 
+                color="bg-orange-500/10 text-orange-400"
+              />
+            </TiltCard>
+          </motion.div>
+
+          <motion.div variants={item} className="md:col-span-1 md:row-span-1">
+            <TiltCard className="h-full bg-slate-900/60">
+              <SparklineStat 
+                label="Total XP" 
+                value={profile.xp} 
+                icon={Activity} 
+                color="bg-blue-500/10 text-blue-400"
+              />
+            </TiltCard>
+          </motion.div>
+
+          {/* 3. DAILY QUIZ (2x1) - Restored from original logic */}
+          <motion.div variants={item} className="md:col-span-2 md:row-span-1 cursor-pointer" onClick={() => router.push('/dashboard/daily-quiz')}>
+            <TiltCard className="h-full p-6 flex flex-col justify-center bg-gradient-to-r from-indigo-900/40 to-slate-900/60 border-indigo-500/20 hover:border-indigo-400/50">
+               <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold tracking-widest uppercase mb-1">
+                      <Sparkles size={12} /> Target Practice
+                    </div>
+                    <h3 className="text-2xl font-black text-white">Daily Quiz Available</h3>
+                    <p className="text-xs text-slate-400 font-mono">+50 XP REWARD FOR COMPLETION</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-full bg-indigo-500/20 flex items-center justify-center border border-indigo-500/30">
+                    <Target className="text-indigo-400" />
+                  </div>
+               </div>
+            </TiltCard>
+          </motion.div>
+
+          {/* 4. CLASS LIST (4xN) */}
+          <motion.div variants={item} className="md:col-span-4 min-h-[240px] pt-8">
+             <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+                <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+                  <BookOpen className="text-cyan-500" /> 
+                  <span className="bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-500">ENROLLED PROTOCOLS</span>
+                </h2>
+                
+                <div className="flex items-center gap-3">
+                  {/* Filter Toggle */}
+                  <div className="flex bg-slate-900 p-1 rounded-lg border border-white/5">
+                    <button 
+                      onClick={() => setFilter('all')}
+                      className={`px-3 py-1.5 text-[10px] font-bold uppercase rounded transition-all ${filter === 'all' ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                      All
+                    </button>
+                    <button 
+                      onClick={() => setFilter('active')}
+                      className={`px-3 py-1.5 text-[10px] font-bold uppercase rounded transition-all ${filter === 'active' ? 'bg-cyan-500/20 text-cyan-400' : 'text-slate-500 hover:text-slate-300'}`}
+                    >
+                      Active
+                    </button>
+                  </div>
+
+                  <button 
+                    onClick={() => setShowJoinModal(true)}
+                    className="flex items-center gap-2 px-4 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/50 rounded text-cyan-400 text-xs font-bold font-mono uppercase tracking-wider transition-all active:scale-95 shadow-[0_0_15px_rgba(34,211,238,0.1)]"
+                  >
+                    <Shield size={14} /> Join Protocol
+                  </button>
+                </div>
              </div>
-             <button className="bg-white/20 hover:bg-white/30 p-3 rounded-full backdrop-blur-sm transition-colors">
-               <ArrowRight className="w-5 h-5 text-white" />
-             </button>
-           </div>
-        </div>
 
-        {/* 2. Courses Section */}
-        <div id="my-courses">
-           <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
-              <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                <BookOpen className="w-5 h-5 text-indigo-600" />
-                My Courses
-              </h2>
-              
-              <div className="flex gap-2">
-                 <button 
-                   onClick={() => setShowJoinModal(true)}
-                   className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 text-xs font-bold rounded-xl hover:bg-indigo-100 transition"
-                 >
-                    <Plus className="w-3.5 h-3.5" />
-                    Join Class
-                 </button>
-                 <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
-                    <button onClick={() => setFilter('all')} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${filter === 'all' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-900'}`}>All</button>
-                    <button onClick={() => setFilter('active')} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${filter === 'active' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-900'}`}>Active</button>
-                 </div>
-              </div>
-           </div>
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {displayClasses.length > 0 ? displayClasses.map(cls => (
+                  <motion.div 
+                    key={cls.id}
+                    whileHover={{ scale: 1.01, y: -2 }}
+                    whileTap={{ scale: 0.99 }}
+                    onClick={() => router.push(`/dashboard/class/${cls.id}`)}
+                    className="group relative h-40 bg-slate-900/40 border border-white/5 hover:border-cyan-500/50 rounded-2xl p-6 cursor-pointer overflow-hidden transition-all"
+                  >
+                    <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/0 via-cyan-500/5 to-cyan-500/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
+                    
+                    <div className="flex justify-between items-start mb-4">
+                       <span className="font-mono text-[10px] text-cyan-500 border border-cyan-500/20 px-2 py-1 rounded bg-cyan-950/30">
+                         {cls.access_code}
+                       </span>
+                       <div className="p-1.5 rounded bg-white/5 group-hover:bg-cyan-500/20 transition-colors">
+                         <Target className="text-slate-600 group-hover:text-cyan-400 transition-colors" size={14} />
+                       </div>
+                    </div>
+                    
+                    <h3 className="text-xl font-bold text-slate-200 group-hover:text-white mb-1 line-clamp-1">{cls.name}</h3>
+                    <p className="text-xs text-slate-500 font-mono flex items-center gap-2">
+                      <span className={`w-1.5 h-1.5 rounded-full ${cls.status === 'active' ? 'bg-emerald-500' : 'bg-slate-600'}`}></span>
+                      STATUS: {cls.status.toUpperCase()}
+                    </p>
+                    
+                    <div className="absolute bottom-6 right-6 opacity-0 group-hover:opacity-100 transition-opacity translate-x-2 group-hover:translate-x-0">
+                       <ArrowUpRight className="text-cyan-400" />
+                    </div>
+                  </motion.div>
+                )) : (
+                  <div className="col-span-full h-40 flex flex-col items-center justify-center border border-dashed border-slate-800 rounded-2xl text-slate-600 font-mono text-sm bg-slate-900/20">
+                    <Terminal className="mb-4 opacity-50" />
+                    NO_CLASSES_FOUND. INIT_JOIN();
+                  </div>
+                )}
+             </div>
+          </motion.div>
 
-           {classes.length === 0 ? (
-              <EmptyState onJoin={() => setShowJoinModal(true)} />
-           ) : (
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-                 {displayClasses.map(cls => (
-                   <ClassCard key={cls.id} classData={cls} />
-                 ))}
-              </div>
-           )}
-        </div>
+        </motion.div>
       </div>
 
-      {/* ✅ MODAL */}
       <JoinClassModal 
         isOpen={showJoinModal} 
         onClose={() => setShowJoinModal(false)}
         userId={profile.id}
         onSuccess={() => window.location.reload()} 
       />
-    </div>
-  );
-}
-
-// --- SUB-COMPONENTS (Cleaned up) ---
-
-function ClassCard({ classData }: { classData: Class }) {
-  const router = useRouter();
-  
-  return (
-    <div 
-      onClick={() => router.push(`/dashboard/class/${classData.id}`)}
-      className="group bg-white p-5 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer relative overflow-hidden"
-    >
-      <div className="flex items-start gap-4 mb-4">
-          <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center shrink-0 font-black text-lg group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-            {classData.name.charAt(0)}
-          </div>
-          <div className="flex-1 min-w-0">
-            <h4 className="font-bold text-slate-900 line-clamp-1">{classData.name}</h4>
-            <p className="text-xs text-slate-500 font-medium truncate">Code: <span className="font-mono">{classData.access_code}</span></p>
-          </div>
-      </div>
-      
-      <div className="flex gap-2">
-          <span className="bg-slate-50 text-slate-600 px-2 py-1 rounded text-[10px] font-bold border border-slate-100 flex items-center gap-1">
-            <BookOpen className="w-3 h-3"/> {classData._count?.courses || 0} Modules
-          </span>
-      </div>
-    </div>
-  );
-}
-
-function EmptyState({ onJoin }: { onJoin: () => void }) {
-  return (
-    <div className="bg-white rounded-3xl border-2 border-dashed border-slate-200 p-12 text-center">
-        <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
-          <BookOpen className="w-8 h-8 text-slate-300" />
-        </div>
-        <h3 className="text-lg font-bold text-slate-900">No courses yet</h3>
-        <p className="text-slate-500 text-sm mt-1 mb-4">Join a class to start learning.</p>
-        <button onClick={onJoin} className="text-indigo-600 font-bold text-sm hover:underline">Join Class</button>
     </div>
   );
 }

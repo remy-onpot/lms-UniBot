@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 const genAI = new GoogleGenerativeAI(env.GOOGLE_GENERATIVE_AI_API_KEY || "");
-export const runtime = "edge";
+export const runtime = "nodejs";
 
 // Updated Schema to accept images
 const chatRequestSchema = z.object({

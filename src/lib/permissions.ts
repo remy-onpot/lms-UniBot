@@ -1,5 +1,5 @@
 // src/lib/permissions.ts
-import { COHORT_RULES, SAAS_PLANS, PlanTier, UserRole } from './constants';
+import { COHORT_RULES, PLAN_LIMITS, PlanTier, UserRole } from './constants';
 
 interface AccessContext {
   role: UserRole;
@@ -13,7 +13,6 @@ interface AccessContext {
 export const Permissions = {
   isContentLocked: (ctx: AccessContext) => {
     // 1. Admins & Owners: Always have access
-    // ✅ This comparison is now valid because UserRole includes 'university_admin'
     if (ctx.role === 'university_admin' || ctx.role === 'super_admin') return false;
     if (ctx.role === 'lecturer' && ctx.is_owner) return false;
 
@@ -38,12 +37,14 @@ export const Permissions = {
   },
 
   canCreateClass: (currentClassCount: number, tier: PlanTier) => {
-    const plan = SAAS_PLANS[tier as keyof typeof SAAS_PLANS] || SAAS_PLANS.starter;
+    // ✅ FIX: Use PLAN_LIMITS instead of SAAS_PLANS
+    const plan = PLAN_LIMITS[tier] || PLAN_LIMITS.starter;
     return currentClassCount < plan.limits.max_classes;
   },
 
   canAddStudent: (currentStudentCount: number, tier: PlanTier) => {
-    const plan = SAAS_PLANS[tier as keyof typeof SAAS_PLANS] || SAAS_PLANS.starter;
+    // ✅ FIX: Use PLAN_LIMITS instead of SAAS_PLANS
+    const plan = PLAN_LIMITS[tier] || PLAN_LIMITS.starter;
     return currentStudentCount < plan.limits.max_students_per_class;
   }
 };

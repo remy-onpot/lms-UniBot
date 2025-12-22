@@ -1,8 +1,15 @@
 // src/components/features/course/CourseHeader.tsx
 import { Course } from '@/types';
 
+// ✅ FIX 1: Extend the type locally to include the joined 'classes' data
+interface CourseWithRelations extends Course {
+  classes?: {
+    name: string;
+  };
+}
+
 interface CourseHeaderProps {
-  course: Course | null;
+  course: CourseWithRelations | null; // ✅ FIX 2: Use the extended type
   isPaywalledAndLocked: boolean;
   canEdit: boolean;
   isCourseRep: boolean;
@@ -21,7 +28,7 @@ export function CourseHeader({
   onAnnounce 
 }: CourseHeaderProps) {
   return (
-    <div className="relative overflow-hidden bg-linear-to-br from-indigo-950 to-slate-950 rounded-3xl p-8 md:p-10 mb-8 shadow-xl text-white" role="banner" aria-label="Course Header">
+    <div className="relative overflow-hidden bg-gradient-to-br from-indigo-950 to-slate-950 rounded-3xl p-8 md:p-10 mb-8 shadow-xl text-white" role="banner" aria-label="Course Header">
       {/* Decorative Circles */}
       <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none" aria-hidden="true"></div>
       <div className="absolute bottom-0 left-0 w-40 h-40 bg-blue-500/20 rounded-full blur-3xl -ml-10 -mb-10 pointer-events-none" aria-hidden="true"></div>
@@ -39,8 +46,8 @@ export function CourseHeader({
             )}
           </div>
           <h1 className="text-3xl md:text-4xl font-bold leading-tight mb-2 text-white">{course?.title}</h1>
-          {/* Fix: text-blue-100 -> text-blue-50 for higher contrast on dark bg */}
-          <p className="text-blue-50 text-lg font-medium opacity-90">{course?.classes?.name}</p>
+          {/* ✅ FIX 3: Now TypeScript knows 'classes' might exist */}
+          <p className="text-blue-50 text-lg font-medium opacity-90">{course?.classes?.name || 'Unknown Class'}</p>
         </div>
 
         {canEdit && (

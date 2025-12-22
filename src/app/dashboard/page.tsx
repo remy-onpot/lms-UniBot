@@ -1,40 +1,72 @@
-import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
+import { createClient } from '@/lib/supabase/server';
+import { ClassService } from '@/lib/services/class.service';
+import { CourseService } from '@/lib/services/course.service';
+import { GamificationService } from '@/lib/services/gamification.service';
 import DashboardClient from './DashboardClient';
 import { UserProfile } from '@/types';
 
 export default async function DashboardPage() {
   const supabase = await createClient();
-
+  
   // 1. Auth Check
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  if (authError || !user) {
-    redirect('/login');
-  }
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect('/login');
 
-  // 2. Fetch Full Profile
-  // We fetch strictly what we defined in the types
-  const { data: profile, error: profileError } = await supabase
+  // 2. Initialize Services
+  const classService = new ClassService(supabase);
+  const courseService = new CourseService(supabase);
+  const gamificationService = new GamificationService(supabase);
+
+  // 3. Fetch User Profile
+  const { data: profileData } = await supabase
     .from('users')
     .select('*')
     .eq('id', user.id)
     .single();
 
-  if (profileError || !profile) {
-    // If auth exists but profile is missing, something is wrong with the Trigger.
-    // In production, we might redirect to a "Setup Profile" page or error.
-    console.error('Profile missing for user:', user.id);
-    redirect('/login'); // Or a custom error page
-  }
+  if (!profileData) redirect('/onboarding'); 
 
-  // 3. Check Onboarding
-  // If we added an 'onboarding_completed' flag to the DB, check it here.
-  // For now, we pass the profile to the client to decide.
-  
+  const profile = profileData as UserProfile;
+
+  // 4. Parallel Data Fetching
+  const [classesResult, lecturerModulesResult, statsResult, dailyLoginResult] = await Promise.allSettled([
+    classService.getDashboardClasses(),
+    
+    profile.role === 'lecturer' 
+      ? courseService.getLecturerCourses(user.id) 
+      : Promise.resolve([]),
+
+    profile.role === 'student'
+      ? gamificationService.getUserStats(user.id) // ✅ UPDATED: Use Service method instead of direct RPC
+      : Promise.resolve(null),
+      
+    profile.role === 'student'
+      ? gamificationService.checkDailyLogin(user.id)
+      : Promise.resolve(null)
+  ]);
+
+  // Safely extract values
+  const classes = classesResult.status === 'fulfilled' ? classesResult.value : [];
+  const lecturerModules = lecturerModulesResult.status === 'fulfilled' ? lecturerModulesResult.value : [];
+  const studentStats = statsResult.status === 'fulfilled' ? statsResult.value : null;
+  const dailyLoginReward = dailyLoginResult.status === 'fulfilled' ? dailyLoginResult.value : null;
+
   return (
-    <div className="h-full w-full">
-      {/* Fixed: Passed 'initialProfile' instead of 'user' to match DashboardClient props */}
-      <DashboardClient initialProfile={profile as UserProfile} />
-    </div>
+    <DashboardClient 
+      initialProfile={{
+        ...profile,
+        // ✅ FIX: Map 'streak' from reward or fall back to profile
+        current_streak: dailyLoginReward?.streak ?? profile.current_streak,
+        // ✅ FIX: The service now returns 'points_added', not 'xp_earned'
+        xp: (profile.xp || 0) + (dailyLoginReward?.points_added || 0),
+        // ✅ FIX: Gems logic removed from service for now, keeping profile gems
+        gems: profile.gems || 0
+      }}
+      initialClasses={classes}
+      initialModules={lecturerModules}
+      initialStats={studentStats}
+      dailyLoginReward={dailyLoginReward}
+    />
   );
 }

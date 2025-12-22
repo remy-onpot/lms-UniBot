@@ -1,20 +1,25 @@
 'use client';
 
 import { useState } from 'react';
-import { X } from 'lucide-react';
+import { X, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { ClassService } from '@/lib/services/class.service'; // ✅ Import the Service
+
+import { supabase } from '@/lib/supabase';
+import { ClassService } from '@/lib/services/class.service';
 
 interface JoinClassModalProps {
   isOpen: boolean;
   onClose: () => void;
-  userId: string;       // ✅ We need the user ID
-  onSuccess: () => void; // ✅ Callback to reload page
+  userId: string;
+  onSuccess: () => void;
 }
 
 export function JoinClassModal({ isOpen, onClose, userId, onSuccess }: JoinClassModalProps) {
   const [accessCode, setAccessCode] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // ✅ FIX 2: Instantiate Service
+  const classService = new ClassService(supabase);
 
   if (!isOpen) return null;
 
@@ -25,13 +30,12 @@ export function JoinClassModal({ isOpen, onClose, userId, onSuccess }: JoinClass
     const toastId = toast.loading("Joining class...");
 
     try {
-      // 1. ✅ Delegate to Service (Handles Lecturer/Student checks & Column names)
-      await ClassService.joinClass(accessCode, userId);
+      // ✅ FIX 3: Use instance method
+      await classService.joinClass(accessCode, userId);
       
       toast.success("Successfully joined class!", { id: toastId });
       setAccessCode('');
       
-      // 2. Trigger parent refresh
       onSuccess(); 
       onClose();
 
@@ -95,8 +99,9 @@ export function JoinClassModal({ isOpen, onClose, userId, onSuccess }: JoinClass
             <button
               onClick={handleJoin}
               disabled={isSubmitting || !accessCode.trim()}
-              className="flex-1 h-12 px-4 rounded-xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex-1 h-12 px-4 rounded-xl bg-indigo-600 text-white font-bold hover:bg-indigo-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
+              {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
               {isSubmitting ? 'Joining...' : 'Join Class'}
             </button>
           </div>

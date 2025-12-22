@@ -8,8 +8,7 @@ import {
   CheckCircle, ShieldCheck, Loader2, Zap 
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
-import { getAppConfigAction, calculatePriceAction } from '@/app/actions';
-
+import { getAppConfigAction, calculatePriceAction, calculateStudentPriceAction } from '@/app/actions/billing.actions';
 interface CourseItem {
   id: string;
   title: string;
@@ -95,8 +94,8 @@ export default function StudentBillingPage() {
         const totalSingle = singlePrice * courses.length;
         
         // Use Server Action to get exact bundle price (handles discounts/sales)
-        const bundlePrice = await calculatePriceAction('bundle', courses.map(c => c.id));
-
+// ✅ FIX: Pass the COUNT (number) and TRUE (boolean) for bundle
+const bundlePrice = await calculateStudentPriceAction(courses.length, true);
         const courseItems: CourseItem[] = courses.map(c => {
             const isSingleActive = unlockedCourseIds.has(c.id);
             return {

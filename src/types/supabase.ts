@@ -395,33 +395,6 @@ export type Database = {
           },
         ]
       }
-      coupons: {
-        Row: {
-          code: string
-          discount_percent: number
-          expires_at: string | null
-          is_active: boolean | null
-          max_uses: number | null
-          times_used: number | null
-        }
-        Insert: {
-          code: string
-          discount_percent: number
-          expires_at?: string | null
-          is_active?: boolean | null
-          max_uses?: number | null
-          times_used?: number | null
-        }
-        Update: {
-          code?: string
-          discount_percent?: number
-          expires_at?: string | null
-          is_active?: boolean | null
-          max_uses?: number | null
-          times_used?: number | null
-        }
-        Relationships: []
-      }
       course_topics: {
         Row: {
           course_id: string
@@ -502,38 +475,6 @@ export type Database = {
           },
         ]
       }
-      daily_usage_logs: {
-        Row: {
-          ai_messages_count: number | null
-          date: string | null
-          id: string
-          user_id: string | null
-          virtual_lab_minutes: number | null
-        }
-        Insert: {
-          ai_messages_count?: number | null
-          date?: string | null
-          id?: string
-          user_id?: string | null
-          virtual_lab_minutes?: number | null
-        }
-        Update: {
-          ai_messages_count?: number | null
-          date?: string | null
-          id?: string
-          user_id?: string | null
-          virtual_lab_minutes?: number | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "daily_usage_logs_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       document_sections: {
         Row: {
           content: string
@@ -593,27 +534,6 @@ export type Database = {
         }
         Relationships: []
       }
-      interests: {
-        Row: {
-          category: string | null
-          emoji: string
-          id: string
-          label: string
-        }
-        Insert: {
-          category?: string | null
-          emoji: string
-          id?: string
-          label: string
-        }
-        Update: {
-          category?: string | null
-          emoji?: string
-          id?: string
-          label?: string
-        }
-        Relationships: []
-      }
       materials: {
         Row: {
           category: Database["public"]["Enums"]["material_category"] | null
@@ -657,24 +577,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }
-      pricing_config: {
-        Row: {
-          description: string | null
-          key: string
-          value: number
-        }
-        Insert: {
-          description?: string | null
-          key: string
-          value: number
-        }
-        Update: {
-          description?: string | null
-          key?: string
-          value?: number
-        }
-        Relationships: []
       }
       questions: {
         Row: {
@@ -781,30 +683,21 @@ export type Database = {
       }
       shop_items: {
         Row: {
-          asset_value: string | null
           cost: number
-          created_at: string | null
-          description: string | null
           id: string
           is_active: boolean | null
           name: string
           type: string
         }
         Insert: {
-          asset_value?: string | null
           cost?: number
-          created_at?: string | null
-          description?: string | null
-          id: string
+          id?: string
           is_active?: boolean | null
           name: string
           type: string
         }
         Update: {
-          asset_value?: string | null
           cost?: number
-          created_at?: string | null
-          description?: string | null
           id?: string
           is_active?: boolean | null
           name?: string
@@ -869,39 +762,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
-      }
-      subscription_plans: {
-        Row: {
-          description: string | null
-          features: string[]
-          id: string
-          is_active: boolean | null
-          label: string
-          limits: Json
-          price: number
-          sort_order: number | null
-        }
-        Insert: {
-          description?: string | null
-          features: string[]
-          id: string
-          is_active?: boolean | null
-          label: string
-          limits: Json
-          price: number
-          sort_order?: number | null
-        }
-        Update: {
-          description?: string | null
-          features?: string[]
-          id?: string
-          is_active?: boolean | null
-          label?: string
-          limits?: Json
-          price?: number
-          sort_order?: number | null
-        }
-        Relationships: []
       }
       transactions: {
         Row: {
@@ -1001,21 +861,21 @@ export type Database = {
       user_inventory: {
         Row: {
           id: string
-          item_id: string
-          purchased_at: string | null
-          user_id: string
+          is_equipped: boolean | null
+          item_id: string | null
+          user_id: string | null
         }
         Insert: {
           id?: string
-          item_id: string
-          purchased_at?: string | null
-          user_id: string
+          is_equipped?: boolean | null
+          item_id?: string | null
+          user_id?: string | null
         }
         Update: {
           id?: string
-          item_id?: string
-          purchased_at?: string | null
-          user_id?: string
+          is_equipped?: boolean | null
+          item_id?: string | null
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -1025,11 +885,17 @@ export type Database = {
             referencedRelation: "shop_items"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "user_inventory_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
         ]
       }
       users: {
         Row: {
-          active_access_tier: string | null
           avatar_url: string | null
           bio: string | null
           created_at: string | null
@@ -1051,11 +917,9 @@ export type Database = {
           subscription_end_date: string | null
           subscription_status: string | null
           university_id: string | null
-          wallet_balance: number | null
           xp: number | null
         }
         Insert: {
-          active_access_tier?: string | null
           avatar_url?: string | null
           bio?: string | null
           created_at?: string | null
@@ -1077,11 +941,9 @@ export type Database = {
           subscription_end_date?: string | null
           subscription_status?: string | null
           university_id?: string | null
-          wallet_balance?: number | null
           xp?: number | null
         }
         Update: {
-          active_access_tier?: string | null
           avatar_url?: string | null
           bio?: string | null
           created_at?: string | null
@@ -1103,7 +965,6 @@ export type Database = {
           subscription_end_date?: string | null
           subscription_status?: string | null
           university_id?: string | null
-          wallet_balance?: number | null
           xp?: number | null
         }
         Relationships: [
@@ -1153,27 +1014,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      calculate_order_price: {
-        Args: { p_coupon_code?: string; p_seats: number }
-        Returns: Json
-      }
-      calculate_student_bill: {
-        Args: { is_bundle: boolean; num_courses: number }
-        Returns: number
-      }
-      check_achievements: {
-        Args: { event_type: string; user_uuid: string }
-        Returns: string[]
-      }
-      check_feature_access: {
-        Args: { feature_name: string; user_uuid: string }
-        Returns: boolean
-      }
       get_student_dashboard_stats: {
         Args: { student_uuid: string }
         Returns: Json
       }
-      get_student_stats: { Args: { student_uuid: string }; Returns: Json }
       get_user_relevant_classes: {
         Args: never
         Returns: {
@@ -1193,13 +1037,6 @@ export type Database = {
           isOneToOne: false
           isSetofReturn: true
         }
-      }
-      increment_ai_usage: { Args: { user_uuid: string }; Returns: undefined }
-      increment_coupon_usage: { Args: { p_code: string }; Returns: undefined }
-      process_daily_login: { Args: { user_uuid: string }; Returns: Json }
-      purchase_shop_item: {
-        Args: { p_item_id: string; p_user_id: string }
-        Returns: number
       }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }

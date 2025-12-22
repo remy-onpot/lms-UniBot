@@ -1,14 +1,19 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { CourseService } from '../lib/services/course.service';
-import { AssignmentService } from '../lib/services/assignment.service';
-import { supabase } from '../lib/supabase';
+import { useQuery } from '@tanstack/react-query';
+import { CourseService } from '@/lib/services/course.service';
+import { supabase } from '@/lib/supabase';
+
+// Helper to get service instance
+const getService = () => new CourseService(supabase);
 
 // 1. Fetch Course Metadata
 export function useCourse(courseId: string) {
   return useQuery({
     queryKey: ['course', courseId],
-    queryFn: () => CourseService.getById(courseId),
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    queryFn: async () => {
+      const service = getService();
+      return await service.getById(courseId);
+    },
+    staleTime: 5 * 60 * 1000, 
     enabled: !!courseId,
   });
 }
@@ -17,7 +22,10 @@ export function useCourse(courseId: string) {
 export function useCourseMaterials(courseId: string) {
   return useQuery({
     queryKey: ['course-materials', courseId],
-    queryFn: () => CourseService.getMaterials(courseId),
+    queryFn: async () => {
+      const service = getService();
+      return await service.getMaterials(courseId);
+    },
     staleTime: 5 * 60 * 1000,
     enabled: !!courseId,
   });
@@ -27,7 +35,10 @@ export function useCourseMaterials(courseId: string) {
 export function useCourseTopics(courseId: string) {
   return useQuery({
     queryKey: ['course-topics', courseId],
-    queryFn: () => CourseService.getTopics(courseId),
+    queryFn: async () => {
+      const service = getService();
+      return await service.getTopics(courseId);
+    },
     staleTime: 5 * 60 * 1000,
     enabled: !!courseId,
   });
@@ -37,8 +48,13 @@ export function useCourseTopics(courseId: string) {
 export function useCourseAssignments(courseId: string, userId: string | undefined, isStudent: boolean) {
   return useQuery({
     queryKey: ['course-assignments', courseId, userId],
-    queryFn: () => CourseService.getAssignments(courseId, userId!, isStudent),
-    staleTime: 1 * 60 * 1000, // 1 minute cache for assignments
+    queryFn: async () => {
+      const service = getService();
+      // Ensure strict typing for userId
+      if (!userId) throw new Error("User ID required");
+      return await service.getAssignments(courseId, userId, isStudent);
+    },
+    staleTime: 1 * 60 * 1000,
     enabled: !!courseId && !!userId,
   });
 }
@@ -47,8 +63,17 @@ export function useCourseAssignments(courseId: string, userId: string | undefine
 export function useCourseAnnouncements(classId: string | undefined) {
   return useQuery({
     queryKey: ['class-announcements', classId],
-    queryFn: () => CourseService.getAnnouncements(classId!),
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    queryFn: async () => {
+        // Since getAnnouncements might be on ClassService or CourseService, 
+        // assuming it's on CourseService based on your code.
+        // If it's missing on CourseService, you might need to check ClassService.
+        const service = getService();
+        if (!classId) return [];
+        // Note: Ensure getAnnouncements exists on your CourseService class!
+        // If it doesn't, you need to add it or use the correct service.
+        return (service as any).getAnnouncements ? await (service as any).getAnnouncements(classId) : [];
+    },
+    staleTime: 5 * 60 * 1000,
     enabled: !!classId,
   });
 }

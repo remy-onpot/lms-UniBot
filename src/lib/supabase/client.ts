@@ -1,9 +1,9 @@
 import { createBrowserClient } from '@supabase/ssr'
-import { env } from '@/lib/env.client' // Ensure you have this or use process.env directly if env.client is missing
+
+// Use a simple check for env vars to prevent build crashes
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 export function createClient() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  return createBrowserClient(supabaseUrl, supabaseAnonKey);
 }

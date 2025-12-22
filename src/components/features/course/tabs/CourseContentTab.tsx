@@ -7,16 +7,19 @@ import {
 } from 'lucide-react';
 
 import { extractDataFromPDF } from '@/lib/utils/pdf-utils';
-import { extractDataFromDocx } from '@/lib/utils/docx-utils'; // ✅ Word Support
-import { CourseService } from '@/lib/services/course.service';
+import { extractDataFromDocx } from '@/lib/utils/docx-utils';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
+
+// ✅ FIX 1: Import Client & Service
+import { supabase } from '@/lib/supabase';
+import { CourseService } from '@/lib/services/course.service';
 
 // Components
 import { CourseMaterials } from '@/components/features/course/CourseMaterials';
 import { TopicList } from '@/components/features/course/TopicList';
 import LessonEditor from '@/components/features/editor/LessonEditor';
-import BookReader from '@/components/features/course/BookReader'; // ✅ Book Reader
+import BookReader from '@/components/features/course/BookReader';
 
 // Modals
 import { UploadResourceModal } from '@/components/features/course/modals/UploadResourceModal';
@@ -50,7 +53,7 @@ interface CourseContentTabProps {
   classId: string;
   materials: any;
   topics: any[];
-  canEdit: boolean; // 🔒 Should be strict Lecturer-only permission
+  canEdit: boolean;
   isCourseRep: boolean;
   hasCourseAccess: boolean;
   hasBundleAccess: boolean;
@@ -85,6 +88,9 @@ export default function CourseContentTab({
   const [activeModal, setActiveModal] = useState<'upload_supp' | 'manual_quiz' | 'ai_quiz' | 'topic' | null>(null);
   const [selectedTopic, setSelectedTopic] = useState<any>(null);
 
+  // ✅ FIX 2: Instantiate Service
+  const courseService = new CourseService(supabase);
+
   // Sync content from DB
   useEffect(() => {
     if (materials?.mainHandout?.content_text) {
@@ -94,14 +100,10 @@ export default function CourseContentTab({
 
   // --- HANDLERS ---
 
-  /**
-   * 📄 SMART IMPORT (Word & PDF)
-   */
   const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files?.[0]) return;
     const file = e.target.files[0];
     
-    // Safety Limit (20MB)
     if (file.size > 20 * 1024 * 1024) {
        toast.error("File is too large (Max 20MB).");
        return;
@@ -111,12 +113,10 @@ export default function CourseContentTab({
     try {
         let content = "";
         
-        // A. Handle WORD (.docx) - High Fidelity
         if (file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || file.name.endsWith(".docx")) {
             content = await extractDataFromDocx(file);
             toast.success("Word Document Imported! Formatting preserved.", { id: toastId });
         } 
-        // B. Handle PDF - Fallback
         else if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
             toast.loading("Extracting PDF text (this might lose some formatting)...", { id: toastId });
             const { fullText } = await extractDataFromPDF(file);
@@ -139,7 +139,8 @@ export default function CourseContentTab({
   const handleSaveLesson = async (html: string) => {
     setSavingLesson(true);
     try {
-        await CourseService.updateMainLesson(courseId, html);
+        // ✅ FIX 3: Use instance method
+        await courseService.updateMainLesson(courseId, html);
         setLessonContent(html);
         setIsEditingLesson(false);
         toast.success("Lesson Saved Successfully");
@@ -203,7 +204,6 @@ export default function CourseContentTab({
 
   return (
     <>
-      {/* Dynamic Grid: Editor takes full width when active */}
       <div className={cn("space-y-8 transition-all duration-300", isEditingLesson ? "lg:col-span-3" : "lg:col-span-2")}>
         
         {/* 1. NATIVE LESSON SYSTEM */}
@@ -230,10 +230,10 @@ export default function CourseContentTab({
 
             {/* --- SWITCHER: EDITOR vs BOOK READER --- */}
             {isEditingLesson ? (
-                // 🅰️ EDIT MODE (Full)
+                // 🅰️ EDIT MODE
                 <div className="bg-slate-50/50">
                     {!lessonContent && (
-                         <div className="m-4 bg-indigo-50 p-6 rounded-xl border border-indigo-100 text-center">
+                          <div className="m-4 bg-indigo-50 p-6 rounded-xl border border-indigo-100 text-center">
                             <p className="text-base text-indigo-900 font-bold mb-1">Start from scratch or import a file</p>
                             <p className="text-xs text-indigo-600 mb-4">
                                 ✨ <strong>Pro Tip:</strong> Word documents (.docx) give the best results!
@@ -245,26 +245,22 @@ export default function CourseContentTab({
                         </div>
                     )}
                     
-                    {/* Tip for Lecturers */}
                     <div className="bg-orange-50 px-4 py-2 text-xs text-orange-800 border-b border-orange-100 flex items-center justify-center gap-2">
-                         <Scissors className="w-3 h-3" />
-                         <strong>Page Breaks:</strong> Click the "Split Page" button in the toolbar to create pages for the reader.
+                          <Scissors className="w-3 h-3" />
+                          <strong>Page Breaks:</strong> Click the "Split Page" button in the toolbar to create pages for the reader.
                     </div>
                     
                     <LessonEditor initialContent={lessonContent} onSave={handleSaveLesson} isSaving={savingLesson} />
                 </div>
             ) : (
-                // 🅱️ READ MODE (Collapsible + Paginated)
+                // 🅱️ READ MODE
                 <div className="relative group">
-                     {/* Collapsible Container */}
-                     <div className={cn(
+                      <div className={cn(
                         "transition-all duration-500 ease-in-out bg-white",
-                        // If NOT expanded, force height limit and hide overflow
                         !isExpanded && "max-h-[300px] overflow-hidden opacity-80" 
                     )}>
-                        {/* THE BOOK READER COMPONENT */}
                         {lessonContent ? (
-                             <BookReader content={lessonContent} />
+                              <BookReader content={lessonContent} />
                         ) : (
                             <div className="text-center py-12">
                                 <div className="bg-slate-50 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-3">
@@ -276,7 +272,7 @@ export default function CourseContentTab({
                         )}
                     </div>
 
-                    {/* Expand/Collapse Trigger (Only if there is content) */}
+                    {/* Expand/Collapse Trigger */}
                     {lessonContent && (
                         <div className={cn(
                             "absolute bottom-0 left-0 right-0 flex justify-center pt-24 pb-6 transition-all z-10",
@@ -362,7 +358,13 @@ export default function CourseContentTab({
                 courseId={courseId}
                 classId={classId}
                 onUnlock={onUnlockPaywall}
-                onDeleteQuiz={async (id) => { if(confirm("Delete?")) { await CourseService.deleteQuiz(id); refreshData(); }}}
+                onDeleteQuiz={async (id) => { 
+                    if(confirm("Delete?")) { 
+                        // ✅ FIX 3: Use instance method
+                        await courseService.deleteQuiz(id); 
+                        refreshData(); 
+                    }
+                }}
                 onOpenModal={(type, item) => { 
                     setSelectedTopic(item); 
                     if (type === 'quiz') setActiveModal('ai_quiz'); 

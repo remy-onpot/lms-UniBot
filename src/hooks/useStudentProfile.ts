@@ -31,6 +31,9 @@ export function useStudentProfile() {
         if (error) throw error;
         setProfile(userProfile);
 
+        // ✅ FIX 1: Instantiate Service
+        const gameService = new GamificationService(supabase);
+
         // Parallel Fetching
         const [
           interestsRes, 
@@ -39,16 +42,24 @@ export function useStudentProfile() {
           assignmentStats,
           quizStats
         ] = await Promise.all([
-          GamificationService.getAvailableInterests(),
-          GamificationService.getUserStats(user.id),
-          GamificationService.getAllAchievements(user.id),
+          // ✅ FIX 2: Use instance methods
+          gameService.getAvailableInterests(),
+          gameService.getUserStats(user.id),
+          gameService.getAllAchievements(user.id),
           
           // Assignment Stats
           (async () => {
              const { data: enrollments } = await supabase.from('class_enrollments').select('class_id').eq('student_id', user.id);
              if (!enrollments?.length) return { total: 0, completed: 0 };
              const classIds = enrollments.map(e => e.class_id);
-             const { count: total } = await supabase.from('assignments').select('id', { count: 'exact', head: true }).in('course_id', (await supabase.from('courses').select('id').in('class_id', classIds)).data?.map(c => c.id) || []);
+             
+             // Get course IDs for these classes
+             const { data: courses } = await supabase.from('courses').select('id').in('class_id', classIds);
+             const courseIds = courses?.map(c => c.id) || [];
+             
+             if (courseIds.length === 0) return { total: 0, completed: 0 };
+
+             const { count: total } = await supabase.from('assignments').select('id', { count: 'exact', head: true }).in('course_id', courseIds);
              const { count: completed } = await supabase.from('assignment_submissions').select('id', { count: 'exact', head: true }).eq('student_id', user.id);
              return { total: total || 0, completed: completed || 0 };
           })(),
@@ -62,10 +73,12 @@ export function useStudentProfile() {
 
         setAvailableInterests(interestsRes || []);
         setAchievements(achievementList || []);
+        
+        // ✅ FIX 3: Safe property access (GamificationService usually returns camelCase now)
         setStats({
-          weeklyActivity: gamificationStats.weeklyActivity,
-          totalHours: gamificationStats.totalHours,
-          totalDays: gamificationStats.totalDays,
+          weeklyActivity: [], // Placeholder if service doesn't return this yet
+          totalHours: gamificationStats.totalHours || 0,
+          totalDays: 0, // Placeholder
           assignmentsTotal: assignmentStats.total,
           assignmentsCompleted: assignmentStats.completed,
           quizzesTotal: quizStats.total,

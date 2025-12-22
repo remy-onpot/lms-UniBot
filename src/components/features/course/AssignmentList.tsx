@@ -1,15 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import { Assignment, AssignmentSubmission } from '@/types';
+import { Assignment } from '@/types';
 import { Button } from '@/components/ui/Button';
 import { 
   Plus, Calendar, FileText, Trash2, Upload, Eye, CheckCircle, Clock, Download, Loader2 
 } from 'lucide-react';
 import { toast } from 'sonner';
+
+// ✅ FIX: Use your project's existing supabase client
+import { supabase } from '@/lib/supabase';
 import { AssignmentService } from '@/lib/services/assignment.service';
+
 import { useSync } from '@/components/providers/SyncProvider';
-import { db } from '@/lib/db';
 import * as XLSX from 'xlsx';
 
 interface AssignmentListProps {
@@ -42,6 +45,9 @@ export function AssignmentList({
   const [isExporting, setIsExporting] = useState(false);
   const { isOnline } = useSync();
 
+  // ✅ FIX: Instantiate service using your local client
+  const assignmentService = new AssignmentService(supabase);
+
   // --- Gradebook Export Logic ---
   const handleExportGrades = async () => {
     if (!courseId) return;
@@ -49,7 +55,7 @@ export function AssignmentList({
     const toastId = toast.loading("Generating Gradebook...");
 
     try {
-      const { assignments: courseAssignments, submissions } = await AssignmentService.getCourseGradebook(courseId);
+      const { assignments: courseAssignments, submissions } = await assignmentService.getCourseGradebook(courseId);
 
       if (courseAssignments.length === 0) {
         toast.dismiss(toastId);
@@ -90,7 +96,7 @@ export function AssignmentList({
           const score = student._scores[assign.id] || 0;
           row[assign.title] = score;
           totalScore += score;
-          totalPossible += assign.total_points;
+          totalPossible += (assign.total_points || 0);
         });
 
         const percentage = totalPossible > 0 ? (totalScore / totalPossible) * 100 : 0;
@@ -122,33 +128,16 @@ export function AssignmentList({
     }
   };
 
-  // --- Wrapper for Submit to Handle Offline ---
   const handleSafeSubmit = async (e: React.ChangeEvent<HTMLInputElement>, id: string, title: string, desc: string, points: number) => {
     if (!e.target.files?.[0]) return;
 
     if (!isOnline) {
-        // 🛑 OFFLINE MODE
-        // We can't easily store the PDF in Dexie for sync without bloating it.
-        // For MVP, we warn them. For Enterprise, we'd convert to Base64 and store (heavy).
-        // Let's implement the Queue logic assuming the backend can handle a delayed blob or we just notify.
-        
         toast.warning("You are Offline", { 
-            description: "Assignment submissions require internet connection to upload files. Please connect and try again." 
+            description: "Assignment submissions require internet connection. Please connect and try again." 
         });
-        
-        /* // FUTURE: If you want true offline file sync:
-        const file = e.target.files[0];
-        await db.offlineActions.add({
-            type: 'assignment_submission',
-            payload: { assignmentId: id, fileData: file, ... }, // Needs complex blob handling
-            status: 'pending',
-            created_at: new Date().toISOString()
-        });
-        */
         return;
     }
 
-    // 🟢 ONLINE MODE
     onSubmit(e, id, title, desc, points);
   };
 
@@ -194,10 +183,10 @@ export function AssignmentList({
                   <h3 className="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">{assign.title}</h3>
                   <div className="flex items-center gap-4 text-xs text-slate-500 font-medium">
                     <span className="flex items-center gap-1 bg-slate-100 px-2 py-1 rounded-md">
-                      <Calendar className="w-3 h-3" /> Due {new Date(assign.due_date).toLocaleDateString()}
+                      <Calendar className="w-3 h-3" /> Due {assign.due_date ? new Date(assign.due_date).toLocaleDateString() : 'No Due Date'}
                     </span>
                     <span className="flex items-center gap-1">
-                      <FileText className="w-3 h-3" /> {assign.total_points} Pts
+                      <FileText className="w-3 h-3" /> {assign.total_points || 0} Pts
                     </span>
                   </div>
                 </div>
@@ -240,7 +229,13 @@ export function AssignmentList({
                           accept=".pdf" 
                           className="hidden" 
                           disabled={uploading}
-                          onChange={(e) => handleSafeSubmit(e, assign.id, assign.title, assign.description, assign.total_points)}
+                          onChange={(e) => handleSafeSubmit(
+                            e, 
+                            assign.id, 
+                            assign.title, 
+                            (assign as any).description || '', 
+                            assign.total_points || 0
+                          )}
                         />
                       </label>
                     )

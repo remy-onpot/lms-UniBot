@@ -45,6 +45,7 @@ export const UserProfileSchema = z.object({
   bio: z.string().optional().nullable(),
   phone_number: z.string().optional().nullable(),
   profile_frame: z.string().default('default'),
+  created_at: z.string().datetime().optional(),
 });
 
 export type UserProfile = z.infer<typeof UserProfileSchema>;
@@ -62,9 +63,11 @@ export const ClassSchema = z.object({
   lecturer_id: z.string().uuid().nullable(),
   access_code: z.string().length(6),
   type: z.enum(['saas', 'cohort']).default('cohort'),
-  created_at: z.string().datetime(),
+  created_at: z.string().datetime().optional(),
   access_price: z.number().default(0),
-  owner_id: z.string().uuid().optional(), // Added for creation flow
+  owner_id: z.string().uuid().optional(),
+  // ✅ FIXED: Added status field to schema
+  status: z.string().default('active'),
 
   _count: z.object({
     enrollments: z.number().optional(),
@@ -72,8 +75,15 @@ export const ClassSchema = z.object({
   }).optional()
 });
 
+// ✅ FIX: Add 'description' to the intersection type
 export type Class = z.infer<typeof ClassSchema> & {
   courses?: Course[];
+  lecturer?: Partial<UserProfile> | null;
+  description?: string; // <--- Add this line
+  _count?: {            // (Optional) Helpful for the dashboard stats
+    courses: number;
+    enrollments: number;
+  };
 };
 
 export const CourseSchema = z.object({
@@ -101,6 +111,7 @@ export type Course = z.infer<typeof CourseSchema> & {
 // =============================================================================
 
 export type DbMaterial = Database['public']['Tables']['materials']['Row'];
+export interface Material extends DbMaterial {}
 
 export interface Topic {
   id: string;
@@ -109,8 +120,6 @@ export interface Topic {
   course_id: string;
   created_at: string;
 }
-
-export interface Material extends DbMaterial {}
 
 export interface Question {
   id: string;
@@ -126,6 +135,11 @@ export interface Quiz {
   title: string;
   created_at: string;
   questions?: Question[];
+  
+  // ✅ ADDED: Missing fields used by the Gradebook UI
+  description?: string;
+  topic?: string; 
+  class_id?: string;
 }
 
 export interface QuizResult {
@@ -134,6 +148,16 @@ export interface QuizResult {
   student_id: string;
   score: number;
   created_at: string;
+  
+  // ✅ ADDED: Optional alias if your DB uses 'submitted_at'
+  submitted_at?: string; 
+
+  // ✅ ADDED: This is critical for the "Student Name" column
+  users?: {
+    full_name: string;
+    email: string;
+    avatar_url?: string;
+  };
 }
 
 // =============================================================================
@@ -153,15 +177,6 @@ export const AIGradeSchema = z.object({
 
 export type AIGradedResponse = z.infer<typeof AIGradeSchema>;
 
-export interface Assignment {
-  id: string;
-  title: string;
-  total_points: number | null;
-  due_date: string | null;
-  course_id: string;
-  mySubmission?: AssignmentSubmission;
-}
-
 export const AssignmentSubmissionSchema = z.object({
   id: z.string().uuid(),
   assignment_id: z.string().uuid(),
@@ -171,10 +186,21 @@ export const AssignmentSubmissionSchema = z.object({
   score: z.number().optional().nullable(),
   feedback: z.string().optional().nullable(),
   status: z.enum(['pending_grading', 'graded', 'failed']).default('pending_grading'),
+  graded_by: z.enum(['lecturer', 'ai']).optional().nullable(),
+  ai_breakdown: z.any().optional().nullable(),
   submitted_at: z.string().datetime(),
 });
 
 export type AssignmentSubmission = z.infer<typeof AssignmentSubmissionSchema>;
+
+export interface Assignment {
+  id: string;
+  title: string;
+  total_points: number | null;
+  due_date: string | null;
+  course_id: string;
+  mySubmission?: AssignmentSubmission;
+}
 
 // =============================================================================
 // 6. CHAT & AI
@@ -234,6 +260,8 @@ export interface Transaction {
   created_at: string;
 }
 
+export type DbTransaction = Database['public']['Tables']['transactions']['Row'];
+
 // =============================================================================
 // 8. SHOP
 // =============================================================================
@@ -241,9 +269,11 @@ export interface Transaction {
 export interface ShopItem {
   id: string;
   name: string;
+  description: string; // ✅ Added: Required for the modal details
   cost: number;
-  type: string;
-  is_active: boolean | null;
+  type: 'frame' | 'boost' | 'freeze'; 
+  asset_value?: string; 
+  is_active?: boolean | null;
 }
 
 // =============================================================================
@@ -257,4 +287,52 @@ export interface Announcement {
   title: string;
   message: string;
   created_at: string;
+}
+export interface AIGeneratedQuestion {
+  question_text: string;
+  options: string[];
+  correct_answer: string; // The letter (e.g., "A") or the full text
+  explanation?: string;
+  topic?: string;
+}
+
+// Add to src/types/index.ts
+
+export interface Achievement {
+  id: string;
+  title: string;
+  description: string;
+  badge_url: string;
+  earned_at?: string;
+}
+
+export interface CourseGrade {
+  course_id: string;
+  course_name: string;
+  code: string;
+  credits: number;
+  grade_letter: string; // A, B+, etc.
+  grade_point: number;  // 4.0, 3.5, etc.
+  semester: string;
+  year: number;
+  skills?: string[]; 
+  trend_data?: number[];
+}
+// Add this to src/types/index.ts
+
+export interface CourseWithRelations {
+  id: string;
+  title: string;
+  course_code: string;
+  description: string | null;
+  class_id: string;
+  lecturer_id: string;
+  created_at: string;
+  status: string; // Enforced as string (not null) for UI
+  classes: {
+    id: string;
+    name: string;
+    access_code: string;
+    lecturer_id?: string;
+  };
 }

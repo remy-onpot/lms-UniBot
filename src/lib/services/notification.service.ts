@@ -1,54 +1,45 @@
-import { createClient } from '@/lib/supabase/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { Database } from '@/types/database.types';
 
 export class NotificationService {
   
+  constructor(private supabase: SupabaseClient<Database>) {}
+
   /**
-   * Send a system notification (e.g., "Assignment Graded")
-   * Currently just logs, but can be connected to an email provider (Resend) or WhatsApp
+   * 1. Saves announcement to DB
+   * 2. (Optional) Triggers external broadcast via API
    */
-  static async sendNotification(userId: string, title: string, message: string, type: 'info' | 'alert' | 'success') {
-    // TODO: Integrate Resend or Twilio here
-    console.log(`[Notification to ${userId}] ${type.toUpperCase()}: ${title} - ${message}`);
+  async broadcastToClass(classId: string, title: string, message: string, lecturerId: string) {
     
-    // If you add a 'notifications' table later:
-    /*
-    const supabase = await createClient();
-    await supabase.from('notifications').insert({
-      user_id: userId,
-      title,
-      message,
-      type,
-      is_read: false
-    });
-    */
-  }
-
-  /**
-   * Send class-wide announcement
-   */
-  static async broadcastToClass(classId: string, title: string, message: string) {
-    const supabase = await createClient();
-
-    // 1. Save Announcement to DB
-    const { error } = await supabase.from('class_announcements').insert({
-      class_id: classId,
-      title,
-      message,
-      created_at: new Date().toISOString()
-    });
+    // A. Save to Database
+    const { data: announcement, error } = await this.supabase
+      .from('class_announcements')
+      .insert({
+        class_id: classId,
+        lecturer_id: lecturerId,
+        title,
+        message,
+        created_at: new Date().toISOString()
+      })
+      .select()
+      .single();
 
     if (error) throw error;
 
-    // 2. Fetch all students (for email blast)
-    const { data: students } = await supabase
+    // B. Fetch Student Count (Simulating the broadcast count)
+    const { count } = await this.supabase
       .from('class_enrollments')
-      .select('student_id')
+      .select('student_id', { count: 'exact', head: true })
       .eq('class_id', classId)
       .eq('status', 'approved');
 
-    if (students) {
-      console.log(`Broadcasting to ${students.length} students in class ${classId}`);
-      // Loop and send emails here
-    }
+    // C. (Optional) Call Server API for WhatsApp/Email here
+    // await fetch('/api/broadcast', { ... })
+
+    return { 
+      success: true, 
+      count: count || 0,
+      announcement 
+    };
   }
 }

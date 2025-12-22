@@ -4,7 +4,10 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../../../../lib/supabase';
 import { useParams, useRouter } from 'next/navigation';
 import { getRouteParam } from '../../../../lib/route-utils';
-import { ClassService, ModuleItem, ClassItem } from '../../../../lib/services/class.service';
+// Import Types
+import { Class as ClassItem, Course as ModuleItem } from '@/types';
+// Import Services
+import { ClassService } from '../../../../lib/services/class.service';
 import { CourseService } from '../../../../lib/services/course.service';
 import Link from 'next/link';
 import { FocusTrap } from 'focus-trap-react';
@@ -15,7 +18,6 @@ export default function ClassPage() {
   const classId = getRouteParam(params, 'classId');
   
   // State
-  // FIX: Use ModuleItem[] instead of Course[] to match Service return type
   const [classInfo, setClassInfo] = useState<ClassItem | null>(null);
   const [modules, setModules] = useState<ModuleItem[]>([]);
   const [role, setRole] = useState<string | null>(null);
@@ -29,8 +31,14 @@ export default function ClassPage() {
   const [newCourse, setNewCourse] = useState({ title: '', description: '' });
   const [processing, setProcessing] = useState(false);
 
+  // ✅ Instantiate Services
+  // We use the supabase client imported from lib
+  const classService = new ClassService(supabase);
+  const courseService = new CourseService(supabase);
+
   useEffect(() => {
     if (classId) fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [classId]);
 
   const fetchData = async () => {
@@ -50,14 +58,15 @@ export default function ClassPage() {
       setIsCourseRep(profile?.is_course_rep || false);
 
       // 2. Fetch Class Details
-      // We can now safely use the Service since we added getById to it
-      const classData = await ClassService.getById(classId!);
+      // ✅ FIX: Use instance method getClassById
+      const classData = await classService.getClassById(classId!);
       if (!classData) throw new Error("Class not found");
       setClassInfo(classData);
 
       // 3. Fetch Modules
-      const modulesData = await ClassService.getModules(classId!);
-      setModules(modulesData);
+      // ✅ FIX: Use courseService to get modules (courses)
+      const modulesData = await courseService.getCoursesByClass(classId!);
+      setModules(modulesData as ModuleItem[]);
 
     } catch (err: any) {
       console.error(err);
@@ -74,19 +83,21 @@ export default function ClassPage() {
     try {
       if (!userId || !classId) return;
 
-      await CourseService.create({
+      // ✅ FIX: Use courseService.createCourse
+      await courseService.createCourse({
         title: newCourse.title,
         description: newCourse.description,
         lecturer_id: userId,
-        class_id: classId
+        class_id: classId,
+        status: 'active'
       });
 
       setShowModal(false);
       setNewCourse({ title: '', description: '' });
       
       // Refresh list
-      const updatedModules = await ClassService.getModules(classId);
-      setModules(updatedModules);
+      const updatedModules = await courseService.getCoursesByClass(classId);
+      setModules(updatedModules as ModuleItem[]);
 
     } catch (error: any) {
       alert(error.message);
@@ -150,6 +161,7 @@ export default function ClassPage() {
                         <div className="space-y-2">
                             <span className="inline-block px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-xs font-medium tracking-wide">CLASSROOM</span>
                             <h1 className="text-3xl md:text-4xl font-bold tracking-tight">{classInfo?.name}</h1>
+                            {/* ✅ FIX: Now 'description' exists on the type */}
                             <p className="text-blue-100 max-w-2xl text-lg opacity-90">{classInfo?.description}</p>
                             
                             <div className="flex items-center gap-3 pt-2">
@@ -177,7 +189,6 @@ export default function ClassPage() {
                             )}
                         </div>
                     </div>
-                    {/* Decorative Background Circles */}
                     <div className="absolute top-0 right-0 -mt-10 -mr-10 w-64 h-64 bg-white/10 rounded-full blur-3xl"></div>
                     <div className="absolute bottom-0 left-0 -mb-10 -ml-10 w-40 h-40 bg-blue-400/20 rounded-full blur-2xl"></div>
                 </div>

@@ -1,15 +1,16 @@
-import { createClient } from '@/lib/supabase/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { Database } from '@/types/database.types';
 import { Quiz, Question, QuizResult } from '@/types';
 
 export class QuizService {
   
+  constructor(private supabase: SupabaseClient<Database>) {}
+
   /**
    * Fetch a full quiz with questions (for taking the quiz)
    */
-  static async getQuizById(quizId: string) {
-    const supabase = await createClient();
-
-    const { data, error } = await supabase
+  async getQuizById(quizId: string) {
+    const { data, error } = await this.supabase
       .from('quizzes')
       .select(`
         *,
@@ -25,11 +26,9 @@ export class QuizService {
   /**
    * Submit a quiz attempt and calculate score
    */
-  static async submitQuiz(quizId: string, studentId: string, answers: Record<string, string>) {
-    const supabase = await createClient();
-
+  async submitQuiz(quizId: string, studentId: string, answers: Record<string, string>) {
     // 1. Fetch correct answers (Server-side validation)
-    const { data: questions, error: qError } = await supabase
+    const { data: questions, error: qError } = await this.supabase
       .from('questions')
       .select('id, correct_answer')
       .eq('quiz_id', quizId);
@@ -47,7 +46,7 @@ export class QuizService {
     const score = Math.round((correctCount / questions.length) * 100);
 
     // 3. Save Result
-    const { data: result, error: saveError } = await supabase
+    const { data: result, error: saveError } = await this.supabase
       .from('quiz_results')
       .insert({
         quiz_id: quizId,
@@ -68,7 +67,7 @@ export class QuizService {
   /**
    * Create a generated quiz (from AI or Manual)
    */
-  static async createQuiz(data: {
+  async createQuiz(data: {
     courseId: string;
     title: string;
     topic?: string;
@@ -79,10 +78,8 @@ export class QuizService {
       explanation?: string;
     }[];
   }) {
-    const supabase = await createClient();
-
     // 1. Create Quiz Header
-    const { data: quiz, error: quizError } = await supabase
+    const { data: quiz, error: quizError } = await this.supabase
       .from('quizzes')
       .insert({
         course_id: data.courseId,
@@ -103,7 +100,7 @@ export class QuizService {
       explanation: q.explanation
     }));
 
-    const { error: questionsError } = await supabase
+    const { error: questionsError } = await this.supabase
       .from('questions')
       .insert(questionsToInsert);
 
@@ -113,21 +110,34 @@ export class QuizService {
   }
 
   /**
-   * Get results for a quiz (Lecturer Gradebook)
+   * ✅ NEW: Get Gradebook (Results + Student Info)
+   * This is what the new "AI Gradebook" page is calling.
    */
-  static async getQuizResults(quizId: string) {
-    const supabase = await createClient();
-
-    const { data, error } = await supabase
+  async getGradebook(quizId: string): Promise<QuizResult[]> {
+    const { data, error } = await this.supabase
       .from('quiz_results')
       .select(`
         *,
-        student:users(full_name, email, student_id_code)
+        users:student_id (
+          full_name,
+          email,
+          avatar_url
+        )
       `)
       .eq('quiz_id', quizId)
       .order('score', { ascending: false });
 
-    if (error) throw error;
-    return data;
+    if (error) {
+      console.error('Gradebook fetch error:', error);
+      return [];
+    }
+    
+    // We cast to QuizResult[] because our Type definition now includes the nested 'users' object
+    return data as unknown as QuizResult[];
+  }
+
+  // kept for backward compatibility if other pages use it
+  async getQuizResults(quizId: string) {
+    return this.getGradebook(quizId);
   }
 }

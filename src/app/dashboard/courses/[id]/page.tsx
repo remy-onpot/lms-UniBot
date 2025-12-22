@@ -2,10 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import dynamic from 'next/dynamic'; // ⚡ Lazy Load
+import dynamic from 'next/dynamic'; 
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { UniBotMascot } from '@/components/ui/UniBotMascot';
+import { 
+  ArrowLeft, BookOpen, FileText, FlaskConical, Share2
+} from 'lucide-react';
+
 import { supabase } from '@/lib/supabase';
 import { 
   useCourse, 
@@ -13,18 +16,21 @@ import {
   useCourseTopics, 
   useCourseAssignments, 
 } from '@/hooks/useCourse';
+import { CourseWithRelations } from '@/types'; 
 
-// Critical Components (Load immediately for LCP)
+// Critical Components
 import { CourseHeader } from '@/components/features/course/CourseHeader';
 import { CourseSkeleton } from '@/components/skeletons/CourseSkeleton';
 import { ErrorState } from '@/components/ErrorState';
 import { NotFoundState } from '@/components/NotFoundState';
+import { UniBotMascot } from '@/components/ui/UniBotMascot';
+import { MobileGuard } from '@/components/features/course/MobileGuard';
 
-// Modals (Global)
+// Modals
 import { AnnouncementModal } from '@/components/features/course/modals/AnnouncementModal';
 import { CoursePaywallModal } from '@/components/features/student/CoursePaywallModal';
 
-// ⚡ SUPER LAZY LOAD TABS
+// ⚡ Lazy Loaded Tabs
 const CourseContentTab = dynamic(
   () => import('@/components/features/course/tabs/CourseContentTab'),
   { loading: () => <CourseSkeleton /> }
@@ -39,7 +45,6 @@ const VirtualLab = dynamic(
   () => import('@/components/features/course/VirtualLab').then((mod) => mod.default),
   { loading: () => <div className="h-96 bg-slate-100 rounded-xl animate-pulse" /> }
 );
-import { MobileGuard } from '@/components/features/course/MobileGuard';
 
 export default function CoursePage() {
   const params = useParams();
@@ -79,7 +84,7 @@ export default function CoursePage() {
       setRole(profile?.role);
       setIsCourseRep(profile?.is_course_rep || false);
       
-      // Access Check
+      // Access Check Logic
       if (profile?.role === 'student' && !profile?.is_course_rep && course?.class_id) {
         const now = new Date().toISOString();
         const { data: access } = await supabase
@@ -113,113 +118,179 @@ export default function CoursePage() {
   if (courseError) return <ErrorState message="Failed to load course" onRetry={() => window.location.reload()} />;
   if (!course) return <NotFoundState title="Course Not Found" />;
   
-  // 🔒 PERMISSIONS LOGIC
-  // Only ACTUAL Lecturers can edit the Lesson/Syllabus
+  // 🔒 Permissions
   const canEditContent = role === 'lecturer'; 
-  
-  // Course Reps can do logistics (like Announce), but NOT edit content
-  const canManageLogistics = role === 'lecturer' || isCourseRep;
+
+  // ✅ FIX: Strict Type Sanitization
+  const safeCourse: CourseWithRelations = {
+    ...course,
+    
+    // 1. Handle Nullable Strings - ensure required fields are never null
+    status: course.status || 'active',
+    course_code: course.course_code || '',
+    lecturer_id: course.lecturer_id || '',
+    created_at: course.created_at || new Date().toISOString(),
+
+    // 2. Reconstruct 'classes' to ensure strict shape
+    classes: {
+      id: course.classes?.id || 'unknown',
+      name: course.classes?.name || 'Unknown Class',
+      
+      // 🔒 SECURITY: Cast only this specific object to read access_code safely
+      access_code: (course.classes as { access_code?: string } | null)?.access_code || 'N/A',
+      
+      // 3. Convert DB 'null' to TS 'undefined'
+      lecturer_id: course.classes?.lecturer_id || undefined
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50/50 p-4 md:p-8 font-sans text-slate-900">
-      <div className="mx-auto max-w-7xl space-y-8">
-        
-        {/* HEADER */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <button onClick={() => router.back()} className="text-sm font-bold text-slate-400 hover:text-slate-900 flex items-center gap-1 mb-2 transition-colors">← Back</button>
-            <CourseHeader 
-              course={course}
-              isPaywalledAndLocked={!hasCourseAccess && !canEditContent}
-              canEdit={canEditContent} // Only lecturer can see "Edit Course Settings"
-              isCourseRep={isCourseRep}
-              onInvite={() => { navigator.clipboard.writeText(window.location.href); toast.success("Link Copied!"); }}
-              onAddWeek={() => { /* Handled in Content Tab */ }}
-              onAnnounce={() => setShowAnnounceModal(true)} // Reps CAN announce
-            />
-          </div>
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 pb-20 md:pb-10">
+      
+      {/* 1. TOP NAVIGATION BAR */}
+      <div className="bg-white border-b border-slate-100 sticky top-0 z-20 px-4 py-3 shadow-sm">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <button 
+            onClick={() => router.back()} 
+            className="flex items-center gap-2 text-sm font-bold text-slate-500 hover:text-slate-900 transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" /> Back
+          </button>
           
           <div className="flex items-center gap-2">
-             <button 
-                onClick={() => router.push(`/dashboard/chat/${courseId}?type=lesson`)}
-                className="flex items-center gap-2 bg-purple-100 text-purple-700 px-4 py-3 rounded-xl text-sm font-bold hover:bg-purple-200 transition shadow-sm"
+            <button 
+              onClick={() => { navigator.clipboard.writeText(window.location.href); toast.success("Link Copied!"); }}
+              className="p-2 text-slate-400 hover:bg-slate-50 hover:text-slate-700 rounded-full transition"
             >
-                <UniBotMascot size={20} emotion="happy" />
-                Chat with Lesson
+              <Share2 className="w-4 h-4" />
             </button>
           </div>
         </div>
+      </div>
 
-        {/* NAVIGATION */}
-        <div className="flex gap-1 bg-white p-1 rounded-xl border border-slate-200 w-fit shadow-sm">
-          {['content', 'assignments', 'lab'].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab as any)}
-              className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
-                activeTab === tab 
-                  ? 'bg-slate-900 text-white shadow-md' 
-                  : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
-              }`}
-            >
-              {tab.charAt(0).toUpperCase() + tab.slice(1)} {tab === 'lab' && '🔬'}
-            </button>
-          ))}
+      <div className="mx-auto max-w-7xl p-4 md:p-8 space-y-6">
+        
+        {/* 2. COURSE HEADER */}
+        <div className="animate-in fade-in slide-in-from-top-4 duration-500">
+          <CourseHeader 
+            course={safeCourse} // ✅ FIX: Passing the sanitized object!
+            isPaywalledAndLocked={!hasCourseAccess && !canEditContent}
+            canEdit={canEditContent}
+            isCourseRep={isCourseRep}
+            onInvite={() => { navigator.clipboard.writeText(window.location.href); toast.success("Link Copied!"); }}
+            onAddWeek={() => { /* Handled in Content Tab */ }}
+            onAnnounce={() => setShowAnnounceModal(true)} 
+          />
         </div>
 
-        {/* MAIN CONTENT AREA */}
-        <div className="grid gap-8 lg:grid-cols-3 animate-in fade-in slide-in-from-bottom-4 duration-500">
-             
-             {/* 1. CONTENT TAB */}
-             {activeTab === 'content' && (
-                <CourseContentTab 
+        {/* 3. CONTROL BAR (Tabs + Chat) */}
+        <div className="flex flex-col-reverse md:flex-row md:items-center justify-between gap-4 sticky top-[60px] z-10 bg-slate-50/90 backdrop-blur-sm py-2">
+           
+           {/* Segmented Control Tabs */}
+           <div className="flex bg-white p-1.5 rounded-xl border border-slate-200 shadow-sm w-full md:w-auto overflow-x-auto">
+             {[
+               { id: 'content', label: 'Course Content', icon: BookOpen },
+               { id: 'assignments', label: 'Assignments', icon: FileText },
+               { id: 'lab', label: 'Virtual Lab', icon: FlaskConical }
+             ].map((tab) => (
+               <button
+                 key={tab.id}
+                 onClick={() => setActiveTab(tab.id as any)}
+                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all whitespace-nowrap ${
+                   activeTab === tab.id 
+                     ? 'bg-slate-900 text-white shadow-md' 
+                     : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+                 }`}
+               >
+                 <tab.icon className={`w-4 h-4 ${activeTab === tab.id ? 'text-indigo-300' : 'text-slate-400'}`} />
+                 {tab.label}
+               </button>
+             ))}
+           </div>
+
+           {/* AI Assistant Button */}
+           <button 
+              onClick={() => router.push(`/dashboard/chat/${courseId}?type=lesson`)}
+              className="group flex items-center justify-center gap-3 bg-white border border-indigo-100 hover:border-indigo-300 pl-3 pr-5 py-2.5 rounded-xl transition-all shadow-sm hover:shadow-md"
+           >
+              <div className="bg-indigo-50 p-1.5 rounded-lg group-hover:scale-110 transition-transform">
+                <UniBotMascot size={22} emotion="happy" />
+              </div>
+              <div className="text-left">
+                <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider leading-none">AI Tutor</span>
+                <span className="text-sm font-bold text-indigo-700 leading-none">Chat with Lesson</span>
+              </div>
+           </button>
+        </div>
+
+        {/* 4. MAIN CONTENT AREA */}
+        <div className="min-h-[500px] animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100">
+           
+           {/* Tab 1: Content */}
+           {activeTab === 'content' && (
+              <div className="grid gap-8 lg:grid-cols-3">
+                 <CourseContentTab 
                     courseId={courseId}
-                    courseTitle={course.title}
-                    classId={course.class_id}
+                    courseTitle={safeCourse.title}
+                    classId={safeCourse.class_id}
                     materials={materials}
                     topics={topics}
-                    
-                    // 🔒 SECURITY FIX: Only Lecturer can edit lessons
                     canEdit={canEditContent} 
-                    
                     isCourseRep={isCourseRep}
                     hasCourseAccess={hasCourseAccess}
                     hasBundleAccess={hasBundleAccess}
                     refreshData={refreshData}
                     onUnlockPaywall={() => setShowPaywall(true)}
-                />
-             )}
+                 />
+              </div>
+           )}
 
-             {/* 2. ASSIGNMENTS TAB (Lazy Loaded) */}
-             {activeTab === 'assignments' && (
-                <div className="lg:col-span-2">
-                    <CourseAssignmentsTab 
-                        courseId={courseId}
-                        courseName={course.title}
-                        assignments={assignments}
-                        canEdit={canEditContent} // Reps usually don't create assignments, only lecturers
-                        isCourseRep={isCourseRep}
-                        refreshData={refreshData}
-                    />
-                </div>
-             )}
+           {/* Tab 2: Assignments */}
+           {activeTab === 'assignments' && (
+              <div className="max-w-4xl">
+                 <CourseAssignmentsTab 
+                    courseId={courseId}
+                    courseName={safeCourse.title}
+                    assignments={assignments}
+                    canEdit={canEditContent}
+                    isCourseRep={isCourseRep}
+                    refreshData={refreshData}
+                 />
+              </div>
+           )}
 
-             {/* 3. LAB TAB (Lazy Loaded & Mobile Guarded) */}
-             {activeTab === 'lab' && (
-                <div className="lg:col-span-3">
-                    <MobileGuard>
+           {/* Tab 3: Virtual Lab */}
+           {activeTab === 'lab' && (
+              <div className="w-full">
+                 <MobileGuard>
+                    <div className="bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-800">
                         <VirtualLab />
-                    </MobileGuard>
-                </div>
-             )}
+                    </div>
+                 </MobileGuard>
+              </div>
+           )}
         </div>
+
       </div>
 
-      {/* GLOBAL MODALS */}
-      {showPaywall && <CoursePaywallModal courseName={course.title} courseId={course.id} classId={course.class_id} onClose={() => setShowPaywall(false)} />}
+      {/* --- GLOBAL MODALS --- */}
+      {showPaywall && (
+        <CoursePaywallModal 
+          courseName={safeCourse.title} 
+          courseId={safeCourse.id} 
+          classId={safeCourse.class_id} 
+          onClose={() => setShowPaywall(false)} 
+        />
+      )}
       
-      {/* Announcement Modal (Available to Lecturers & Reps) */}
-      {showAnnounceModal && <AnnouncementModal isOpen={true} onClose={() => setShowAnnounceModal(false)} classId={course.class_id} lecturerId={userId!} />}
+      {showAnnounceModal && (
+        <AnnouncementModal 
+          isOpen={true} 
+          onClose={() => setShowAnnounceModal(false)} 
+          classId={safeCourse.class_id} 
+          lecturerId={userId!} 
+        />
+      )}
     </div>
   );
 }

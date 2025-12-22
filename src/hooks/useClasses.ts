@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ClassService } from '@/lib/services/class.service';
 import { supabase } from '@/lib/supabase';
-import { Role } from '@/types';
+import { toast } from 'sonner';
 
 // 1. Hook to fetch classes
 export function useClasses() {
@@ -11,10 +11,10 @@ export function useClasses() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      // We need the role to know what to fetch
-      const { data: profile } = await supabase.from('users').select('role, is_course_rep').eq('id', user.id).single();
+      const classService = new ClassService(supabase);
       
-      return ClassService.getDashboardClasses(user.id, profile?.role as Role, profile?.is_course_rep || false);
+      // Call instance method (RPC handles role/security internally)
+      return await classService.getDashboardClasses();
     }
   });
 }
@@ -24,14 +24,26 @@ export function useCreateClass() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (data: { name: string; description: string }) => {
+    mutationFn: async (data: { name: string; description: string; access_code: string }) => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
-      return ClassService.createClass(user.id, data.name, data.description);
+
+      const classService = new ClassService(supabase);
+
+      return await classService.createClass({
+        name: data.name,
+        description: data.description, // ✅ Added description to payload
+        owner_id: user.id,
+        access_code: data.access_code,
+        type: 'cohort' // ✅ FIX: Changed 'standard' to 'cohort' to match strict allowed types
+      });
     },
     onSuccess: () => {
-      // ✅ Automatically refresh the 'classes' list when done
       queryClient.invalidateQueries({ queryKey: ['classes'] });
+      toast.success("Class created successfully!");
+    },
+    onError: (error: any) => {
+      toast.error(error.message || "Failed to create class");
     }
   });
 }
@@ -44,11 +56,18 @@ export function useJoinClass() {
     mutationFn: async (code: string) => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
-      return ClassService.joinClass(user.id, code);
+
+      const classService = new ClassService(supabase);
+
+      // Call instance method with correct argument order (accessCode, userId)
+      return await classService.joinClass(code, user.id);
     },
     onSuccess: () => {
-      // ✅ Refresh classes list immediately
       queryClient.invalidateQueries({ queryKey: ['classes'] });
+      toast.success("Joined class successfully!");
+    },
+    onError: (error: any) => {
+      toast.error(error.message || "Failed to join class");
     }
   });
 }

@@ -1,19 +1,47 @@
 'use server';
 
-import { ConfigService } from '@/lib/config-service';
-import { BillingService } from '@/lib/services/billing.service';
+import { createClient } from '@/lib/supabase/server';
+import { ClassService } from '@/lib/services/class.service';
+import { Class } from '@/types';
+import { revalidatePath } from 'next/cache';
 
-/**
- * ⚡ SERVER ACTION: Fetch dynamic config for the client
- * This allows Client Components to know about Flash Sales & Real-time pricing
- */
-export async function getAppConfigAction() {
-  return await ConfigService.getAppConfig();
+// --- CLASS ACTIONS ---
+
+export async function createClassAction(data: Partial<Class>) {
+  const supabase = await createClient();
+  const service = new ClassService(supabase);
+  
+  try {
+    const result = await service.createClass(data);
+    revalidatePath('/dashboard');
+    return { success: true, data: result };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
 }
 
-/**
- * 💰 SERVER ACTION: Calculate exact price securely
- */
-export async function calculatePriceAction(type: 'single' | 'bundle', courseIds: string[]) {
-  return await BillingService.calculateCheckoutPrice(type, courseIds);
+export async function archiveClassAction(classId: string) {
+  const supabase = await createClient();
+  const service = new ClassService(supabase);
+  
+  try {
+    await service.archiveClass(classId);
+    revalidatePath('/dashboard');
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+export async function updateClassAction(classId: string, data: Partial<Class>) {
+  const supabase = await createClient();
+  const service = new ClassService(supabase);
+  
+  try {
+    const result = await service.updateClass(classId, data);
+    revalidatePath('/dashboard');
+    return { success: true, data: result };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
 }

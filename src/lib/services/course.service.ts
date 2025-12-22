@@ -1,4 +1,5 @@
-import { createClient } from '@/lib/supabase/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { Database } from '@/types/database.types';
 import { Course, CourseSchema, Material, Topic, Assignment, Announcement, AssignmentSubmission } from '@/types';
 import { AssignmentService } from './assignment.service';
 
@@ -10,15 +11,14 @@ export interface ReviewTopic {
 }
 
 export class CourseService {
+  constructor(private supabase: SupabaseClient<Database>) {}
   
   // ==========================================
   // 1. CORE COURSE METHODS
   // ==========================================
 
-  static async getById(courseId: string) {
-    const supabase = await createClient();
-
-    const { data, error } = await supabase
+  async getById(courseId: string) {
+    const { data, error } = await this.supabase
       .from('courses')
       .select(`
         *,
@@ -34,9 +34,7 @@ export class CourseService {
     return data;
   }
 
-  static async createCourse(data: Partial<Course>) {
-    const supabase = await createClient();
-    
+  async createCourse(data: Partial<Course>) {
     // Zod validation
     const validation = CourseSchema.safeParse(data);
     if (!validation.success) {
@@ -44,7 +42,7 @@ export class CourseService {
     }
     const safeData = validation.data;
 
-    const { data: newCourse, error } = await supabase
+    const { data: newCourse, error } = await this.supabase
       .from('courses')
       .insert({
         class_id: safeData.class_id,
@@ -61,13 +59,8 @@ export class CourseService {
     return newCourse;
   }
 
-  /**
-   * Helper to get courses for a specific class (Used in Class View)
-   */
-  static async getCoursesByClass(classId: string) {
-    const supabase = await createClient();
-
-    const { data, error } = await supabase
+  async getCoursesByClass(classId: string) {
+    const { data, error } = await this.supabase
       .from('courses')
       .select(`
         *,
@@ -88,113 +81,11 @@ export class CourseService {
   }
 
   // ==========================================
-  // 2. NATIVE LESSON & MATERIAL METHODS
+  // 2. DASHBOARD METHODS
   // ==========================================
 
-  static async updateMainLesson(courseId: string, htmlContent: string) {
-    const supabase = await createClient();
-
-    const { data: existing } = await supabase
-      .from('materials')
-      .select('id')
-      .eq('course_id', courseId)
-      .eq('is_main_handout', true)
-      .maybeSingle();
-
-    if (existing) {
-      const { data, error } = await supabase
-        .from('materials')
-        .update({ 
-          content_text: htmlContent, 
-          // updated_at is handled by DB default
-        })
-        .eq('id', existing.id)
-        .select()
-        .single();
-      
-      if (error) throw error;
-      return data;
-    } else {
-      const { data, error } = await supabase
-        .from('materials')
-        .insert([{
-          course_id: courseId,
-          title: 'Main Lesson',
-          is_main_handout: true,
-          content_text: htmlContent,
-          file_type: 'text/html', 
-          file_url: 'native_lesson',
-          category: 'lecture_note'
-        }])
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
-    }
-  }
-
-  static async getMaterials(courseId: string) {
-    const supabase = await createClient();
-
-    const { data, error } = await supabase
-      .from('materials')
-      .select('id, course_id, title, file_url, file_type, category, is_main_handout, content_text')
-      .eq('course_id', courseId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-
-    const materials = data as Material[];
-    
-    return {
-      mainHandout: materials.find(m => m.is_main_handout || m.category === 'lecture_note') || null,
-      supplementary: materials.filter(m => m.category === 'supplementary' && !m.is_main_handout)
-    };
-  }
-
-  static async deleteMainHandout(materialId: string) {
-    await CourseService.deleteMaterial(materialId);
-  }
-
-  static async deleteMaterial(materialId: string) {
-    const supabase = await createClient();
-
-    const { data: material, error: fetchError } = await supabase
-      .from('materials')
-      .select('file_url, category')
-      .eq('id', materialId)
-      .single();
-
-    if (fetchError) throw fetchError;
-    
-    // Clean up linked topics if this material was key
-    if (material?.category === 'lecture_note') {
-        // Assuming topics table handles status updates correctly or removing the link
-        // For strict types, we just set material_id to null or delete logic as per requirements
-        // Here we just skip logic that might break strict typing if 'status' isn't on course_topics
-    }
-
-    const { error: matError } = await supabase.from('materials').delete().eq('id', materialId);
-    if (matError) throw matError;
-
-    // Clean up storage if it's a real file
-    if (material?.file_url && material.file_url !== 'native_lesson') {
-      const path = material.file_url.split('/course-content/').pop();
-      if (path) {
-        await supabase.storage.from('course-content').remove([path]);
-      }
-    }
-  }
-
-  // ==========================================
-  // 3. DASHBOARD & LIST METHODS
-  // ==========================================
-
-  static async getLecturerCourses(lecturerId: string) {
-    const supabase = await createClient();
-
-    const { data, error } = await supabase
+  async getLecturerCourses(lecturerId: string) {
+    const { data, error } = await this.supabase
       .from('courses') 
       .select(`
         *,
@@ -217,21 +108,20 @@ export class CourseService {
     })) || [];
   }
 
-  static async getStudentCourses(userId: string) {
-    const supabase = await createClient();
-
-    // 1. Get Class Enrollments (Membership)
-    const { data: enrollments } = await supabase
+  async getStudentCourses(userId: string) {
+    // 1. Get Class Enrollments
+    const { data: enrollments } = await this.supabase
       .from('class_enrollments')
       .select('class_id')
       .eq('student_id', userId)
       .eq('status', 'approved');
 
     if (!enrollments?.length) return [];
-    const classIds = enrollments.map(e => e.class_id);
+    
+    const classIds = enrollments.map(e => e.class_id).filter(id => id !== null) as string[];
 
-    // 2. Fetch Courses belonging to those classes
-    const { data: courses } = await supabase
+    // 2. Fetch Courses
+    const { data: courses } = await this.supabase
       .from('courses')
       .select(`
         *,
@@ -252,10 +142,102 @@ export class CourseService {
     }));
   }
 
-  static async getTopics(courseId: string) {
-    const supabase = await createClient();
+  // ==========================================
+  // 3. MATERIAL METHODS
+  // ==========================================
 
-    const { data, error } = await supabase
+  async getMaterials(courseId: string) {
+    const { data, error } = await this.supabase
+      .from('materials')
+      .select('id, course_id, title, file_url, category, is_main_handout, file_type, created_at')
+      .eq('course_id', courseId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    const materials = data as Material[];
+    
+    return {
+      mainHandout: materials.find(m => m.is_main_handout || m.category === 'lecture_note') || null,
+      supplementary: materials.filter(m => !m.is_main_handout && m.category !== 'lecture_note')
+    };
+  }
+
+  async getMaterialContent(materialId: string) {
+    const { data, error } = await this.supabase
+      .from('materials')
+      .select('content_text')
+      .eq('id', materialId)
+      .single();
+
+    if (error) throw error;
+    return data.content_text;
+  }
+
+  async updateMainLesson(courseId: string, htmlContent: string) {
+    const { data: existing } = await this.supabase
+      .from('materials')
+      .select('id')
+      .eq('course_id', courseId)
+      .eq('is_main_handout', true)
+      .maybeSingle();
+
+    if (existing) {
+      const { data, error } = await this.supabase
+        .from('materials')
+        .update({ content_text: htmlContent })
+        .eq('id', existing.id)
+        .select()
+        .single();
+      
+      if (error) throw error;
+      return data;
+    } else {
+      const { data, error } = await this.supabase
+        .from('materials')
+        .insert({
+          course_id: courseId,
+          title: 'Main Lesson',
+          category: 'lecture_note',
+          content_text: htmlContent,
+          file_type: 'text/html', 
+          file_url: 'native_lesson',
+          is_main_handout: true
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    }
+  }
+
+  async deleteMaterial(materialId: string) {
+    const { data: material, error: fetchError } = await this.supabase
+      .from('materials')
+      .select('file_url, category')
+      .eq('id', materialId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    const { error: matError } = await this.supabase.from('materials').delete().eq('id', materialId);
+    if (matError) throw matError;
+
+    if (material?.file_url && material.file_url !== 'native_lesson') {
+      const path = material.file_url.split('/course-content/').pop();
+      if (path) {
+        await this.supabase.storage.from('course-content').remove([path]);
+      }
+    }
+  }
+
+  // ==========================================
+  // 4. UTILITY METHODS
+  // ==========================================
+
+  async getTopics(courseId: string) {
+    const { data, error } = await this.supabase
       .from('course_topics')
       .select('*, quizzes(id)')
       .eq('course_id', courseId)
@@ -265,10 +247,8 @@ export class CourseService {
     return data as Topic[];
   }
 
-  static async getAssignments(courseId: string, userId: string, isStudent: boolean) {
-    const supabase = await createClient();
-
-    const { data: assigns, error } = await supabase
+  async getAssignments(courseId: string, userId: string, isStudent: boolean) {
+    const { data: assigns, error } = await this.supabase
       .from('assignments')
       .select('*')
       .eq('course_id', courseId)
@@ -277,7 +257,7 @@ export class CourseService {
     if (error) throw error;
 
     if (isStudent) {
-      const { data: subs } = await supabase
+      const { data: subs } = await this.supabase
         .from('assignment_submissions')
         .select('id, assignment_id, submitted_at, score, feedback')
         .eq('student_id', userId);
@@ -291,45 +271,25 @@ export class CourseService {
     return assigns as Assignment[];
   }
 
-  static async getAnnouncements(classId: string) {
-    const supabase = await createClient();
-
-    const { data, error } = await supabase
-      .from('class_announcements')
-      .select('*')
-      .eq('class_id', classId)
-      .order('created_at', { ascending: false });
-      
-    if (error) throw error;
-    return data as Announcement[];
-  }
-
-  // ==========================================
-  // 4. UTILITY METHODS
-  // ==========================================
-
-  static async deleteQuiz(quizId: string) {
-    const supabase = await createClient();
-    const { error } = await supabase.from('quizzes').delete().eq('id', quizId);
+  async deleteQuiz(quizId: string) {
+    const { error } = await this.supabase.from('quizzes').delete().eq('id', quizId);
     if (error) throw error;
   }
 
-  static async deleteAssignment(id: string) {
-    return AssignmentService.delete(id);
+async deleteAssignment(id: string) {
+    // 1. Create an instance of the service using the current supabase client
+    const assignmentService = new AssignmentService(this.supabase);
+    
+    // 2. Call the delete method on that instance
+    return assignmentService.delete(id);
   }
   
-  static async getReviewTopics(userId: string): Promise<ReviewTopic[]> {
+  async getReviewTopics(userId: string): Promise<ReviewTopic[]> {
     return [];
   }
 
-  /**
-   * Verify if a student has paid access to this course
-   * Checks BOTH Single Course purchase AND Semester Bundle purchase
-   */
-  static async checkAccess(userId: string, courseId: string, classId: string) {
-    const supabase = await createClient();
-
-    const { data, error } = await supabase
+  async checkAccess(userId: string, courseId: string, classId: string) {
+    const { data, error } = await this.supabase
       .from('student_course_access')
       .select('id, access_type, expires_at')
       .eq('student_id', userId)

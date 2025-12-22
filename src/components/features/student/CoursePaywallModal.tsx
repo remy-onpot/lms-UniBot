@@ -4,8 +4,7 @@ import { X, Lock, CheckCircle, Sparkles, Layers, Loader2, Zap } from 'lucide-rea
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/Button';
 import { supabase } from '@/lib/supabase';
-import { getAppConfigAction, calculatePriceAction } from '@/app/actions';
-
+import { getAppConfigAction, calculateStudentPriceAction } from '@/app/actions/billing.actions';
 interface CoursePaywallModalProps {
   courseName: string;
   courseId: string;
@@ -33,8 +32,8 @@ export function CoursePaywallModal({ courseName, courseId, classId, onClose }: C
         .eq('class_id', classId)
         .eq('status', 'active');
         
-      if (courses) {
-        const price = await calculatePriceAction('bundle', courses.map(c => c.id));
+     if (courses) {
+        const price = await calculateStudentPriceAction(courses.length, true);
         setBundlePrice(price);
       }
     };

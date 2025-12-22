@@ -1,13 +1,16 @@
 'use client';
+
 import { useState } from 'react';
+// ✅ FIX: Use lowercase 'dialog' to match the actual file name
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
-import { NotificationService } from '@/lib/services/notification.service';
 import { toast } from 'sonner';
 import { Megaphone, Send, Loader2 } from 'lucide-react';
+
 import { supabase } from '@/lib/supabase';
+import { NotificationService } from '@/lib/services/notification.service';
 
 interface Props {
   isOpen: boolean;
@@ -20,29 +23,22 @@ export function AnnouncementModal({ isOpen, onClose, classId, lecturerId }: Prop
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({ title: '', message: '' });
 
+  const notificationService = new NotificationService(supabase);
+
   const handleSend = async () => {
     if (!form.title || !form.message) return toast.error("Please fill all fields");
-    setLoading(true);
     
+    setLoading(true);
     try {
-      // 1. Save to DB
-      const { error } = await supabase.from('class_announcements').insert([{ 
-        class_id: classId, 
-        lecturer_id: lecturerId, 
-        title: form.title, 
-        message: form.message 
-      }]);
-      if (error) throw error;
-
-      // 2. Broadcast
-      // Don't await this if it takes too long, let it run in background
-      NotificationService.broadcastToClass(classId, form.title, form.message)
-        .then(res => toast.success(`Sent to ${res.count} students via WhatsApp`))
-        .catch(console.error);
+      const res = await notificationService.broadcastToClass(classId, form.title, form.message, lecturerId);
       
-      toast.success("Announcement Posted!");
+      toast.success("Announcement Posted", {
+        description: `Notified ${res.count} active students.`
+      });
+
       onClose();
       setForm({ title: '', message: '' });
+
     } catch (e: any) {
       toast.error("Failed to send", { description: e.message });
     } finally {
